@@ -1,0 +1,568 @@
+/* ═══════════════════════════════════════════════════════
+   Sampling Wizard — app.js
+   DSP Engine · Plotting · UI · Modal Editor · Theme
+   Uses: filters.js (must be loaded first)
+   ═══════════════════════════════════════════════════════ */
+'use strict';
+
+/* ─── §1 Constants & State ─── */
+const N = 4096;
+const T_WINDOW = 0.5;
+const INTERNAL_RATE = N / T_WINDOW;
+
+const state = {
+  waveform: 'sine', sigFreq: 10, sigAmp: 1, sigDC: 0, sigPhase: 0, sigDuty: 50,
+  samplingFreq: 80,
+  preset: 'flat-top',
+  stages: {
+    aaf: { enabled: true, type: 'butterworth', fp: 20, Gp: -1, Ga: -40, sos: [], order: 0 },
+    sh: { enabled: true, duty: 50 },
+    sw: { enabled: true, duty: 50 },
+    recon: { enabled: true, type: 'butterworth', fp: 20, Gp: -1, Ga: -40, sos: [], order: 0 },
+  },
+  sameFilter: false,
+  faFromSampling: false,
+};
+
+let activeModalFilter = null; // 'aaf' or 'recon'
+
+/* ─── §2 Signal Generator ─── */
+function generateSignal(type, freq, amp, dc, phaseDeg, duty, n, rate) {
+  const out = new Float64Array(n);
+  const phaseRad = phaseDeg * Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const phi = 2 * Math.PI * freq * (i / rate) + phaseRad;
+    let v = 0;
+    switch (type) {
+      case 'sine': v = Math.sin(phi); break;
+      case 'square': { const f = ((phi / (2 * Math.PI)) % 1 + 1) % 1; v = f < (duty / 100) ? 1 : -1; break; }
+      case 'triangle': { const f = ((phi / (2 * Math.PI)) % 1 + 1) % 1; v = f < 0.5 ? (4 * f - 1) : (3 - 4 * f); break; }
+      case 'sawtooth': { const f = ((phi / (2 * Math.PI)) % 1 + 1) % 1; v = 2 * f - 1; break; }
+    }
+    out[i] = v * amp + dc;
+  }
+  return out;
+}
+
+/* ─── §3 Sampling Stages ─── */
+function controlPulse(n, rate, samplingFreq, dutyPct, offsetPct) {
+  const out = new Float64Array(n);
+  const period = rate / samplingFreq;
+  const onSamples = period * (dutyPct / 100);
+  const offset = period * (offsetPct / 100);
+  for (let i = 0; i < n; i++) {
+    const pos = (((i - offset) % period) + period) % period;
+    out[i] = pos < onSamples ? 1 : 0;
+  }
+  return out;
+}
+
+function sampleAndHold(signal, pulse) {
+  const n = signal.length, out = new Float64Array(n);
+  let held = 0, prevPulse = 0;
+  for (let i = 0; i < n; i++) {
+    if (pulse[i] === 1) { out[i] = signal[i]; held = signal[i]; }
+    else { if (prevPulse === 1) held = signal[i > 0 ? i - 1 : 0]; out[i] = held; }
+    prevPulse = pulse[i];
+  }
+  return out;
+}
+
+function analogSwitch(signal, pulse) {
+  const n = signal.length, out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = signal[i] * pulse[i];
+  return out;
+}
+
+/* ─── §4 FFT ─── */
+function fft(real, imag) {
+  const n = real.length;
+  if (n <= 1) return;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; while (j & bit) { j ^= bit; bit >>= 1; } j ^= bit;
+    if (i < j) { [real[i], real[j]] = [real[j], real[i]];[imag[i], imag[j]] = [imag[j], imag[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1, ang = -2 * Math.PI / len, wR = Math.cos(ang), wI = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cR = 1, cI = 0;
+      for (let j = 0; j < half; j++) {
+        const tR = cR * real[i + j + half] - cI * imag[i + j + half], tI = cR * imag[i + j + half] + cI * real[i + j + half];
+        real[i + j + half] = real[i + j] - tR; imag[i + j + half] = imag[i + j] - tI;
+        real[i + j] += tR; imag[i + j] += tI;
+        const tmp = cR * wR - cI * wI; cI = cR * wI + cI * wR; cR = tmp;
+      }
+    }
+  }
+}
+
+function magnitudeSpectrum(signal) {
+  const n = signal.length, re = new Float64Array(n), im = new Float64Array(n);
+  for (let i = 0; i < n; i++) re[i] = signal[i] * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
+  fft(re, im);
+  const halfN = (n >> 1) + 1, mag = new Float64Array(halfN);
+  for (let i = 0; i < halfN; i++) mag[i] = 20 * Math.log10(Math.max(Math.sqrt(re[i] * re[i] + im[i] * im[i]) / n, 1e-12));
+  return mag;
+}
+
+/* ─── §5 Filter Redesign ─── */
+function redesignFilter(key) {
+  const f = state.stages[key];
+  if (!f.enabled || !f.type) return;
+  try {
+    const result = designFilter(f.type, f.fp, f.Gp, f.Ga, INTERNAL_RATE);
+    f.sos = result.sos; f.order = result.order;
+  } catch (e) { console.warn('Filter design failed:', key, e); f.sos = []; f.order = 0; }
+  updateSidebarSummary(key);
+}
+
+function updateSidebarSummary(key) {
+  const f = state.stages[key];
+  const el = document.getElementById(key + '-summary');
+  if (!el) return;
+  const typeNames = {
+    butterworth: 'Butterworth', chebyshev1: 'Chebyshev I', chebyshev2: 'Chebyshev II',
+    cauer: 'Cauer', bessel: 'Bessel', legendre: 'Legendre'
+  };
+  const name = typeNames[f.type] || f.type;
+  el.textContent = `${name} · fp=${f.fp} Hz · fa=${f.fp * 2} Hz · N=${f.order || '—'}`;
+}
+
+/* ─── §6 DSP Pipeline ─── */
+function processPipeline() {
+  const { waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, samplingFreq, stages } = state;
+  const original = generateSignal(waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, N, INTERNAL_RATE);
+  let sig = original;
+  if (stages.aaf.enabled && stages.aaf.sos.length > 0) sig = applySOS(sig, stages.aaf.sos);
+  const shPulse = controlPulse(N, INTERNAL_RATE, samplingFreq, stages.sh.duty, 0);
+  const swPulse = controlPulse(N, INTERNAL_RATE, samplingFreq, stages.sw.duty, stages.sh.duty);
+  if (stages.sh.enabled) sig = sampleAndHold(sig, shPulse);
+  if (stages.sw.enabled) sig = analogSwitch(sig, swPulse);
+  if (stages.recon.enabled && stages.recon.sos.length > 0) sig = applySOS(sig, stages.recon.sos);
+  return { original, processed: sig, spectrum: magnitudeSpectrum(sig) };
+}
+
+/* ─── §7 Canvas Plotter ─── */
+let cachedColors = null;
+const canvasSizeCache = new WeakMap();
+let canvasSizesDirty = true;
+
+function refreshColors() {
+  const s = getComputedStyle(document.documentElement);
+  cachedColors = {
+    grid: s.getPropertyValue('--grid-color').trim() || 'rgba(148,163,184,0.08)',
+    axis: s.getPropertyValue('--axis-color').trim() || 'rgba(148,163,184,0.22)',
+    label: s.getPropertyValue('--label-color').trim() || '#64748b',
+    original: s.getPropertyValue('--plot-original').trim() || '#38bdf8',
+    processed: s.getPropertyValue('--plot-processed').trim() || '#2dd4bf',
+    spectrum: s.getPropertyValue('--plot-spectrum').trim() || '#a78bfa',
+  };
+}
+function invalidateCanvasCache() { canvasSizesDirty = true; }
+
+function getCanvasCtx(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  if (!canvasSizesDirty && canvasSizeCache.has(canvas)) {
+    const c = canvasSizeCache.get(canvas); c.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return c;
+  }
+  const parent = canvas.parentElement;
+  const w = parent.clientWidth, h3 = parent.querySelector('h3') || parent.querySelector('.modal-plot-label');
+  const usedH = (h3 ? h3.offsetHeight + 4 : 0) + 6;
+  const h = Math.max(parent.clientHeight - usedH, 40);
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const result = { ctx, w, h };
+  canvasSizeCache.set(canvas, result);
+  return result;
+}
+
+function drawGrid(ctx, pad, pw, ph, nX, nY) {
+  ctx.strokeStyle = cachedColors.grid; ctx.lineWidth = 1;
+  for (let i = 0; i <= nY; i++) { const y = pad.top + (i / nY) * ph; ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + pw, y); ctx.stroke(); }
+  for (let i = 0; i <= nX; i++) { const x = pad.left + (i / nX) * pw; ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ph); ctx.stroke(); }
+}
+
+function plotTime(canvas, data, color) {
+  const { ctx, w, h } = getCanvasCtx(canvas);
+  const pad = { left: 42, right: 8, top: 6, bottom: 20 }, pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, w, h);
+  let yMax = 0; for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); if (a > yMax) yMax = a; }
+  yMax = Math.max(yMax * 1.15, 0.1);
+  drawGrid(ctx, pad, pw, ph, 8, 4);
+  ctx.strokeStyle = cachedColors.axis; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.left, pad.top + ph / 2); ctx.lineTo(pad.left + pw, pad.top + ph / 2); ctx.stroke();
+  ctx.fillStyle = cachedColors.label; ctx.font = '10px "JetBrains Mono",monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) { const y = pad.top + (i / 4) * ph; ctx.fillText((yMax - 2 * yMax * i / 4).toFixed(1), pad.left - 4, y); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let i = 0; i <= 8; i += 2) { const x = pad.left + (i / 8) * pw; ctx.fillText((T_WINDOW * 1000 * i / 8).toFixed(0), x, pad.top + ph + 2); }
+  ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.4;
+  for (let px = 0; px < pw; px++) {
+    const idx = Math.floor(px / pw * data.length), x = pad.left + px, y = pad.top + ph / 2 - (data[idx] / yMax) * (ph / 2);
+    px === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function plotSpectrum(canvas, magDb, maxFreq) {
+  const { ctx, w, h } = getCanvasCtx(canvas);
+  const pad = { left: 42, right: 8, top: 6, bottom: 20 }, pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, w, h);
+  const dbMax = 0, dbMin = -80, dbRange = dbMax - dbMin;
+  drawGrid(ctx, pad, pw, ph, 8, 4);
+  ctx.fillStyle = cachedColors.label; ctx.font = '10px "JetBrains Mono",monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) { const y = pad.top + (i / 4) * ph; ctx.fillText((dbMax - dbRange * i / 4).toFixed(0), pad.left - 4, y); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let i = 0; i <= 8; i += 2) { const x = pad.left + (i / 8) * pw; ctx.fillText((maxFreq * i / 8).toFixed(0), x, pad.top + ph + 2); }
+  const nBins = magDb.length;
+  ctx.beginPath(); ctx.strokeStyle = cachedColors.spectrum; ctx.lineWidth = 1.4;
+  for (let px = 0; px < pw; px++) {
+    const bin = Math.floor(px / pw * nBins), db = Math.max(magDb[bin], dbMin);
+    const x = pad.left + px, y = pad.top + (1 - (db - dbMin) / dbRange) * ph;
+    px === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+/* ─── §8 Render ─── */
+const canvasOriginal = document.getElementById('plot-original');
+const canvasSampled = document.getElementById('plot-sampled');
+const canvasSpectrum = document.getElementById('plot-spectrum');
+
+function render() {
+  if (!cachedColors) refreshColors();
+  const { original, processed, spectrum } = processPipeline();
+  plotTime(canvasOriginal, original, cachedColors.original);
+  plotTime(canvasSampled, processed, cachedColors.processed);
+  plotSpectrum(canvasSpectrum, spectrum, INTERNAL_RATE / 2);
+  canvasSizesDirty = false;
+}
+
+let rafId = null;
+function scheduleRender() { if (rafId) return; rafId = requestAnimationFrame(() => { render(); rafId = null; }); }
+
+/* ─── §9 Presets ─── */
+function applyPreset(preset) {
+  switch (preset) {
+    case 'instantaneous': state.stages.sh.enabled = true; state.stages.sh.duty = 5; state.stages.sw.enabled = true; state.stages.sw.duty = 5; break;
+    case 'natural': state.stages.sh.enabled = false; state.stages.sw.enabled = true; state.stages.sw.duty = 50; break;
+    case 'flat-top': state.stages.sh.enabled = true; state.stages.sh.duty = 50; state.stages.sw.enabled = false; break;
+    case 'custom': break;
+  }
+  syncUIFromState();
+}
+
+/* ─── §10 Theme Toggle ─── */
+function initTheme() {
+  const saved = localStorage.getItem('sw-theme') || 'dark';
+  applyTheme(saved);
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme');
+    const next = cur === 'light' ? 'dark' : 'light';
+    applyTheme(next); localStorage.setItem('sw-theme', next);
+    refreshColors(); invalidateCanvasCache(); scheduleRender();
+  });
+}
+function applyTheme(theme) {
+  if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.getElementById('theme-icon').textContent = '🌙';
+    document.getElementById('theme-label').textContent = 'Dark';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.getElementById('theme-icon').textContent = '☀️';
+    document.getElementById('theme-label').textContent = 'Light';
+  }
+}
+
+/* ─── §11 Filter Modal Editor ─── */
+function openFilterModal(filterKey) {
+  activeModalFilter = filterKey;
+  const f = state.stages[filterKey];
+  if (f.sos.length === 0) redesignFilter(filterKey);
+  const title = filterKey === 'aaf' ? 'Anti-Alias Filter' : 'Reconstruction Filter';
+  document.getElementById('modal-title').textContent = title;
+
+  // Populate controls from state
+  document.getElementById('modal-type').value = f.type;
+  document.getElementById('modal-fp').value = f.fp;
+  document.getElementById('modal-fp-val').textContent = f.fp;
+  document.getElementById('modal-gp').value = f.Gp;
+  document.getElementById('modal-gp-val').textContent = f.Gp.toFixed(1);
+  document.getElementById('modal-ga').value = f.Ga;
+  document.getElementById('modal-ga-val').textContent = f.Ga;
+  document.getElementById('modal-fa-val').textContent = f.fp * 2;
+  document.getElementById('modal-order-val').textContent = f.order || '—';
+
+  // Disable fp if fa=fs
+  document.getElementById('modal-fp').disabled = state.faFromSampling;
+
+  document.getElementById('filter-modal').style.display = '';
+  document.body.classList.add('modal-open');
+
+  // Draw all 3 plots after a short delay for layout
+  requestAnimationFrame(() => drawModalPlots(f));
+}
+
+function closeFilterModal() {
+  document.getElementById('filter-modal').style.display = 'none';
+  document.body.classList.remove('modal-open');
+  if (activeModalFilter) {
+    updateSidebarSummary(activeModalFilter);
+    if (state.sameFilter) updateSidebarSummary(activeModalFilter === 'aaf' ? 'recon' : 'aaf');
+    scheduleRender();
+  }
+  activeModalFilter = null;
+}
+
+function onModalParamChange() {
+  if (!activeModalFilter) return;
+  const f = state.stages[activeModalFilter];
+  f.type = document.getElementById('modal-type').value;
+  if (!state.faFromSampling) f.fp = parseFloat(document.getElementById('modal-fp').value);
+  f.Gp = parseFloat(document.getElementById('modal-gp').value);
+  f.Ga = parseFloat(document.getElementById('modal-ga').value);
+
+  document.getElementById('modal-fp-val').textContent = f.fp;
+  document.getElementById('modal-gp-val').textContent = f.Gp.toFixed(1);
+  document.getElementById('modal-ga-val').textContent = f.Ga;
+  document.getElementById('modal-fa-val').textContent = f.fp * 2;
+
+  // Sync if same filter
+  if (state.sameFilter) {
+    const other = activeModalFilter === 'aaf' ? 'recon' : 'aaf';
+    Object.assign(state.stages[other], { type: f.type, fp: f.fp, Gp: f.Gp, Ga: f.Ga });
+    redesignFilter(other);
+  }
+
+  redesignFilter(activeModalFilter);
+  document.getElementById('modal-order-val').textContent = f.order || '—';
+  drawModalPlots(f);
+}
+
+function drawModalPlots(f) {
+  if (!cachedColors) refreshColors();
+  if (f.sos.length === 0) return;
+
+  const maxFreq = f.fp * 2 * 1.1; // 1.1 × fa
+  const nPts = 512;
+  const resp = freqResponseFull(f.sos, nPts, INTERNAL_RATE, maxFreq);
+
+  const canvases = [
+    { el: document.getElementById('modal-mag'), data: resp.mags, unit: 'dB', color: cachedColors.spectrum },
+    { el: document.getElementById('modal-phase'), data: resp.phases, unit: '°', color: cachedColors.original },
+    { el: document.getElementById('modal-gd'), data: resp.groupDelays, unit: 'ms', color: cachedColors.processed },
+  ];
+
+  for (const { el, data, unit, color } of canvases) {
+    drawModalSinglePlot(el, data, maxFreq, nPts, unit, color, f);
+  }
+}
+
+function drawModalSinglePlot(canvas, data, maxFreq, nPts, unit, color, f) {
+  const dpr = window.devicePixelRatio || 1;
+  const parent = canvas.parentElement;
+  const w = parent.clientWidth;
+  const label = parent.querySelector('.modal-plot-label');
+  const usedH = label ? label.offsetHeight + 4 : 0;
+  const h = Math.max(parent.clientHeight - usedH, 30);
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const pad = { left: 46, right: 10, top: 4, bottom: 16 };
+  const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, w, h);
+
+  // Auto range
+  let yMin = Infinity, yMax = -Infinity;
+  for (let i = 0; i < nPts; i++) {
+    if (isFinite(data[i])) { if (data[i] < yMin) yMin = data[i]; if (data[i] > yMax) yMax = data[i]; }
+  }
+  if (unit === 'dB') { yMin = Math.max(yMin, -100); yMax = Math.min(yMax + 5, 10); }
+  else { yMin = Math.min(yMin, 0); yMax = yMax * 1.1 || 1; }
+  if (yMax - yMin < 1) { yMax += 0.5; yMin -= 0.5; }
+  const yRange = yMax - yMin;
+
+  // Grid
+  drawGrid(ctx, pad, pw, ph, 8, 4);
+
+  // Y labels
+  ctx.fillStyle = cachedColors.label; ctx.font = '9px "JetBrains Mono",monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (i / 4) * ph;
+    const val = yMax - (i / 4) * yRange;
+    ctx.fillText(val.toFixed(unit === 'dB' ? 0 : 1), pad.left - 4, y);
+  }
+
+  // X labels
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let i = 0; i <= 4; i++) {
+    const x = pad.left + (i / 4) * pw;
+    ctx.fillText((maxFreq * i / 4).toFixed(0), x, pad.top + ph + 1);
+  }
+
+  // Trace
+  ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+  for (let px = 0; px < pw; px++) {
+    const bin = Math.floor(px / pw * nPts);
+    const val = Math.max(Math.min(data[bin], yMax), yMin);
+    const x = pad.left + px, y = pad.top + (1 - (val - yMin) / yRange) * ph;
+    px === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // fp and fa markers (vertical dashed lines)
+  ctx.setLineDash([3, 2]);
+  const fpX = pad.left + (f.fp / maxFreq) * pw;
+  const faX = pad.left + (f.fp * 2 / maxFreq) * pw;
+  ctx.strokeStyle = cachedColors.processed; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(fpX, pad.top); ctx.lineTo(fpX, pad.top + ph); ctx.stroke();
+  ctx.strokeStyle = '#f87171';
+  ctx.beginPath(); ctx.moveTo(faX, pad.top); ctx.lineTo(faX, pad.top + ph); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+/* ─── §12 UI Controller ─── */
+function setNested(path, value) {
+  const keys = path.split('.'); let obj = state;
+  for (let i = 0; i < keys.length - 1; i++)obj = obj[keys[i]];
+  obj[keys[keys.length - 1]] = value;
+}
+function getNested(path) { return path.split('.').reduce((o, k) => o[k], state); }
+
+function bindSlider(id, key, fmt) {
+  const el = document.getElementById(id), ro = document.getElementById(id + '-val');
+  if (!el) return;
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value); setNested(key, v);
+    if (ro) ro.textContent = fmt ? fmt(v) : v;
+    scheduleRender();
+  });
+}
+
+function syncUIFromState() {
+  const toggleMap = { 'stage-aaf': 'stages.aaf.enabled', 'stage-sh': 'stages.sh.enabled', 'stage-sw': 'stages.sw.enabled', 'stage-recon': 'stages.recon.enabled' };
+  for (const [id, path] of Object.entries(toggleMap)) {
+    const el = document.getElementById(id);
+    if (el) { el.checked = getNested(path); updateStageVisual(el); }
+  }
+  const sliderMap = { 'sh-duty': 'stages.sh.duty', 'sw-duty': 'stages.sw.duty' };
+  for (const [id, path] of Object.entries(sliderMap)) {
+    const el = document.getElementById(id), ro = document.getElementById(id + '-val');
+    if (el) { el.value = getNested(path); if (ro) ro.textContent = getNested(path); }
+  }
+  updateSidebarSummary('aaf');
+  updateSidebarSummary('recon');
+}
+
+function updateStageVisual(chk) {
+  const block = chk.closest('.stage-block');
+  if (block) block.classList.toggle('disabled', !chk.checked);
+}
+
+function applyFaFromSampling() {
+  if (!state.faFromSampling) return;
+  const fp = state.samplingFreq / 2;
+  state.stages.aaf.fp = fp;
+  state.stages.recon.fp = fp;
+  redesignFilter('aaf');
+  redesignFilter('recon');
+}
+
+function initUI() {
+  bindSlider('sig-freq', 'sigFreq', v => v);
+  bindSlider('sig-amp', 'sigAmp', v => v.toFixed(2));
+  bindSlider('sig-dc', 'sigDC', v => v.toFixed(2));
+  bindSlider('sig-phase', 'sigPhase', v => v);
+  bindSlider('sig-duty', 'sigDuty', v => v);
+
+  document.getElementById('waveform-select').addEventListener('change', e => {
+    state.waveform = e.target.value;
+    document.getElementById('sig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
+    scheduleRender();
+  });
+  document.getElementById('sig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
+
+  const sampEl = document.getElementById('sampling-freq'), sampRO = document.getElementById('sampling-freq-val');
+  sampEl.addEventListener('input', () => {
+    state.samplingFreq = parseFloat(sampEl.value); sampRO.textContent = state.samplingFreq;
+    if (state.faFromSampling) applyFaFromSampling();
+    scheduleRender();
+  });
+
+  document.getElementById('sampling-preset').addEventListener('change', e => {
+    state.preset = e.target.value; applyPreset(state.preset); scheduleRender();
+  });
+
+  // Stage toggles
+  ['stage-aaf', 'stage-sh', 'stage-sw', 'stage-recon'].forEach(id => {
+    const el = document.getElementById(id);
+    const paths = { 'stage-aaf': 'stages.aaf.enabled', 'stage-sh': 'stages.sh.enabled', 'stage-sw': 'stages.sw.enabled', 'stage-recon': 'stages.recon.enabled' };
+    el.addEventListener('change', () => {
+      setNested(paths[id], el.checked); updateStageVisual(el);
+      document.getElementById('sampling-preset').value = 'custom'; state.preset = 'custom';
+      if (el.checked && (id === 'stage-aaf' || id === 'stage-recon')) redesignFilter(id === 'stage-aaf' ? 'aaf' : 'recon');
+      scheduleRender();
+    });
+    updateStageVisual(el);
+  });
+
+  bindSlider('sh-duty', 'stages.sh.duty', v => v);
+  bindSlider('sw-duty', 'stages.sw.duty', v => v);
+
+  // Filter edit buttons
+  ['aaf', 'recon'].forEach(key => {
+    document.getElementById(key + '-plot-btn').addEventListener('click', () => openFilterModal(key));
+  });
+
+  // Modal controls — live update on every change
+  ['modal-type', 'modal-fp', 'modal-gp', 'modal-ga'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', onModalParamChange);
+  });
+
+  // Modal close
+  document.getElementById('modal-close').addEventListener('click', closeFilterModal);
+  document.getElementById('filter-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeFilterModal();
+  });
+
+  // Global toggle buttons
+  const btnSame = document.getElementById('opt-same-filter');
+  btnSame.addEventListener('click', () => {
+    state.sameFilter = !state.sameFilter;
+    btnSame.classList.toggle('active', state.sameFilter);
+    if (state.sameFilter) {
+      const aaf = state.stages.aaf;
+      Object.assign(state.stages.recon, { type: aaf.type, fp: aaf.fp, Gp: aaf.Gp, Ga: aaf.Ga });
+      redesignFilter('recon');
+      updateSidebarSummary('recon');
+      scheduleRender();
+    }
+  });
+
+  const btnFaFs = document.getElementById('opt-fa-fs');
+  btnFaFs.addEventListener('click', () => {
+    state.faFromSampling = !state.faFromSampling;
+    btnFaFs.classList.toggle('active', state.faFromSampling);
+    if (state.faFromSampling) { applyFaFromSampling(); scheduleRender(); }
+  });
+
+  // Resize
+  window.addEventListener('resize', () => { invalidateCanvasCache(); scheduleRender(); });
+
+  // Init
+  initTheme();
+  applyPreset(state.preset);
+  redesignFilter('aaf');
+  redesignFilter('recon');
+  render();
+}
+
+document.addEventListener('DOMContentLoaded', initUI);

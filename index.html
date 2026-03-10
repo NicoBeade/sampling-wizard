@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="Sampling Wizard — Interactive simulation of analog sampling systems with advanced filter design.">
+  <title>Sampling Wizard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <header id="app-header">
+    <div class="header-glow"></div>
+    <div class="header-center">
+      <h1>⚡ Sampling Wizard</h1>
+      <p class="subtitle">Interactive Sampling System Simulator</p>
+    </div>
+    <button id="theme-toggle" title="Toggle light/dark mode">
+      <span id="theme-icon">☀️</span>
+      <span class="theme-label" id="theme-label">Light</span>
+    </button>
+  </header>
+
+  <main id="app-main">
+    <!-- ─── CONTROL PANEL ─── -->
+    <aside id="controls" class="glass-panel">
+
+      <!-- Signal Source -->
+      <section class="control-group" id="signal-section">
+        <h2>Signal Source</h2>
+        <div class="control-row">
+          <label for="waveform-select">Waveform</label>
+          <select id="waveform-select">
+            <option value="sine">Sine</option>
+            <option value="square">Square</option>
+            <option value="triangle">Triangle</option>
+            <option value="sawtooth">Sawtooth</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label for="sig-freq">Frequency (Hz)</label>
+          <input type="range" id="sig-freq" min="1" max="200" value="10" step="1">
+          <span class="readout" id="sig-freq-val">10</span>
+        </div>
+        <div class="control-row">
+          <label for="sig-amp">Amplitude</label>
+          <input type="range" id="sig-amp" min="0.1" max="2" value="1" step="0.05">
+          <span class="readout" id="sig-amp-val">1.00</span>
+        </div>
+        <div class="control-row">
+          <label for="sig-dc">DC Offset</label>
+          <input type="range" id="sig-dc" min="-2" max="2" value="0" step="0.05">
+          <span class="readout" id="sig-dc-val">0.00</span>
+        </div>
+        <div class="control-row">
+          <label for="sig-phase">Phase (°)</label>
+          <input type="range" id="sig-phase" min="0" max="360" value="0" step="1">
+          <span class="readout" id="sig-phase-val">0</span>
+        </div>
+        <div class="control-row" id="sig-duty-row">
+          <label for="sig-duty">Duty Cycle (%)</label>
+          <input type="range" id="sig-duty" min="1" max="99" value="50" step="1">
+          <span class="readout" id="sig-duty-val">50</span>
+        </div>
+      </section>
+
+      <!-- Sampling -->
+      <section class="control-group" id="sampling-section">
+        <h2>Sampling</h2>
+        <div class="control-row">
+          <label for="sampling-freq">Sampling Freq (Hz)</label>
+          <input type="range" id="sampling-freq" min="10" max="1000" value="80" step="1">
+          <span class="readout" id="sampling-freq-val">80</span>
+        </div>
+        <div class="control-row">
+          <label for="sampling-preset">Preset</label>
+          <select id="sampling-preset">
+            <option value="instantaneous">Instantaneous</option>
+            <option value="natural">Natural</option>
+            <option value="flat-top" selected>Flat-Top</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <!-- Global filter toggles as styled buttons -->
+        <button class="btn-option" id="opt-same-filter">Same filter for AAF &amp; RF</button>
+        <button class="btn-option" id="opt-fa-fs">fa = Sampling Frequency</button>
+      </section>
+
+      <!-- Signal Chain Stages -->
+      <section class="control-group" id="stages-section">
+        <h2>Signal Chain</h2>
+
+        <!-- Anti-Alias Filter -->
+        <div class="stage-block" id="aaf-block">
+          <div class="stage-header">
+            <label class="toggle-switch">
+              <input type="checkbox" id="stage-aaf" checked>
+              <span class="slider"></span>
+            </label>
+            <span class="stage-label">Anti-Alias Filter</span>
+          </div>
+          <div class="stage-params" id="aaf-params">
+            <div class="filter-summary" id="aaf-summary">Butterworth · fp=20 Hz · N=—</div>
+            <button class="btn-plot-filter" id="aaf-plot-btn">📈 Edit &amp; Plot Filter</button>
+          </div>
+        </div>
+
+        <!-- Sample & Hold -->
+        <div class="stage-block">
+          <div class="stage-header">
+            <label class="toggle-switch">
+              <input type="checkbox" id="stage-sh" checked>
+              <span class="slider"></span>
+            </label>
+            <span class="stage-label">Sample &amp; Hold</span>
+          </div>
+          <div class="stage-params" id="sh-params">
+            <div class="control-row">
+              <label for="sh-duty">Duty Cycle (%)</label>
+              <input type="range" id="sh-duty" min="1" max="99" value="50" step="1">
+              <span class="readout" id="sh-duty-val">50</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analog Switch -->
+        <div class="stage-block">
+          <div class="stage-header">
+            <label class="toggle-switch">
+              <input type="checkbox" id="stage-sw" checked>
+              <span class="slider"></span>
+            </label>
+            <span class="stage-label">Analog Switch</span>
+          </div>
+          <div class="stage-params" id="sw-params">
+            <div class="control-row">
+              <label for="sw-duty">Duty Cycle (%)</label>
+              <input type="range" id="sw-duty" min="1" max="99" value="50" step="1">
+              <span class="readout" id="sw-duty-val">50</span>
+            </div>
+            <div class="control-row">
+              <span class="filter-summary">Always counter-phase to S&amp;H</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reconstruction Filter -->
+        <div class="stage-block" id="recon-block">
+          <div class="stage-header">
+            <label class="toggle-switch">
+              <input type="checkbox" id="stage-recon" checked>
+              <span class="slider"></span>
+            </label>
+            <span class="stage-label">Reconstruction Filter</span>
+          </div>
+          <div class="stage-params" id="recon-params">
+            <div class="filter-summary" id="recon-summary">Butterworth · fp=20 Hz · N=—</div>
+            <button class="btn-plot-filter" id="recon-plot-btn">📈 Edit &amp; Plot Filter</button>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- ─── PLOT AREA ─── -->
+    <div id="plot-area">
+      <div class="plot-container glass-panel" id="plot-original-container">
+        <h3>Original Signal</h3>
+        <canvas id="plot-original"></canvas>
+      </div>
+      <div class="plot-container glass-panel" id="plot-sampled-container">
+        <h3>Sampled / Processed Signal</h3>
+        <canvas id="plot-sampled"></canvas>
+      </div>
+      <div class="plot-container glass-panel" id="plot-spectrum-container">
+        <h3>Frequency Spectrum</h3>
+        <canvas id="plot-spectrum"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <!-- ─── Filter Editor Modal ─── -->
+  <div id="filter-modal" class="modal-overlay" style="display:none">
+    <div class="modal-content glass-panel">
+      <div class="modal-header">
+        <h3 id="modal-title">Edit Filter</h3>
+        <button id="modal-close" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-controls">
+          <div class="control-row">
+            <label for="modal-type">Approximation</label>
+            <select id="modal-type">
+              <option value="butterworth">Butterworth</option>
+              <option value="chebyshev1">Chebyshev I</option>
+              <option value="chebyshev2">Chebyshev II</option>
+              <option value="cauer">Cauer (Elliptic)</option>
+              <option value="bessel">Bessel</option>
+              <option value="legendre">Legendre</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <label for="modal-fp">fp (Hz)</label>
+            <input type="range" id="modal-fp" min="5" max="500" value="20" step="1">
+            <span class="readout" id="modal-fp-val">20</span>
+          </div>
+          <div class="control-row">
+            <label for="modal-gp">Gp (dB)</label>
+            <input type="range" id="modal-gp" min="-3" max="-0.5" value="-1" step="0.1">
+            <span class="readout" id="modal-gp-val">-1.0</span>
+          </div>
+          <div class="control-row">
+            <label for="modal-ga">Ga (dB)</label>
+            <input type="range" id="modal-ga" min="-80" max="-20" value="-40" step="1">
+            <span class="readout" id="modal-ga-val">-40</span>
+          </div>
+          <div class="filter-info">
+            <span>fa: <strong id="modal-fa-val">40</strong> Hz</span>
+            <span>N: <strong id="modal-order-val">—</strong></span>
+          </div>
+        </div>
+        <div class="modal-plots">
+          <div class="modal-plot-row"><span class="modal-plot-label">Magnitude (dB)</span><canvas
+              id="modal-mag"></canvas></div>
+          <div class="modal-plot-row"><span class="modal-plot-label">Phase (°)</span><canvas id="modal-phase"></canvas>
+          </div>
+          <div class="modal-plot-row"><span class="modal-plot-label">Group Delay (ms)</span><canvas
+              id="modal-gd"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="filters.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>
