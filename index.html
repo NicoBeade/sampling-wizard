@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -19,7 +19,7 @@
   <header id="app-header">
     <div class="header-glow"></div>
     <div class="header-center">
-      <h1>⚡ Sampling Wizard</h1>
+      <h1>Sampling Wizard</h1>
       <p class="subtitle">Interactive Sampling System Simulator</p>
     </div>
     <button id="theme-toggle" title="Toggle light/dark mode">
@@ -49,6 +49,7 @@
           <input type="range" id="sig-freq" min="1" max="200" value="10" step="1">
           <span class="readout" id="sig-freq-val">10</span>
         </div>
+        </div>
         <div class="control-row">
           <label for="sig-amp">Amplitude</label>
           <input type="range" id="sig-amp" min="0.1" max="2" value="1" step="0.05">
@@ -66,31 +67,53 @@
         </div>
         <div class="control-row" id="sig-duty-row">
           <label for="sig-duty">Duty Cycle (%)</label>
-          <input type="range" id="sig-duty" min="1" max="99" value="50" step="1">
+          <input type="range" id="sig-duty" min="5" max="95" value="50" step="1">
           <span class="readout" id="sig-duty-val">50</span>
         </div>
       </section>
 
       <!-- Sampling -->
       <section class="control-group" id="sampling-section">
-        <h2>Sampling</h2>
+        <h2 style="display: flex; align-items: center; justify-content: space-between;">
+          Sampling
+          <span class="info-tooltip">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <span class="tooltip-content">
+              <strong>Instantaneous:</strong> S&amp;H on, Switch on<br>
+              <strong>Flat-top:</strong> S&amp;H on, Switch off<br>
+              <strong>Natural:</strong> S&amp;H off, Switch on
+            </span>
+          </span>
+        </h2>
         <div class="control-row">
           <label for="sampling-freq">Sampling Freq (Hz)</label>
           <input type="range" id="sampling-freq" min="10" max="1000" value="80" step="1">
           <span class="readout" id="sampling-freq-val">80</span>
         </div>
-        <div class="control-row">
-          <label for="sampling-preset">Preset</label>
-          <select id="sampling-preset">
-            <option value="instantaneous">Instantaneous</option>
-            <option value="natural">Natural</option>
-            <option value="flat-top" selected>Flat-Top</option>
-            <option value="custom">Custom</option>
-          </select>
+      </section>
+
+      <!-- Analog Filters -->
+      <section class="control-group" id="filter-section">
+        <h2>Analog Filters</h2>
+        
+        <div class="stage-params filter-box" id="aaf-params">
+          <div class="stage-label">Anti-Alias Filter</div>
+          <div class="filter-summary" id="aaf-summary">Butterworth · fp=20 Hz · N=—</div>
+          <button class="btn-edit" id="aaf-plot-btn">Edit &amp; Plot Filter</button>
         </div>
-        <!-- Global filter toggles as styled buttons -->
-        <button class="btn-option" id="opt-same-filter">Same filter for AAF &amp; RF</button>
-        <button class="btn-option" id="opt-fa-fs">fa = Sampling Frequency</button>
+
+        <div class="stage-params filter-box" id="recon-params">
+          <div class="stage-label">Reconstruction Filter</div>
+          <div class="filter-summary" id="recon-summary">Butterworth · fp=20 Hz · N=—</div>
+          <button class="btn-edit" id="recon-plot-btn">Edit &amp; Plot Filter</button>
+        </div>
+
+        <div class="spacer"></div>
+        <!-- Global filter toggles -->
+        <div style="display: flex; gap: 0.35rem; margin-top: 0.35rem;">
+          <button class="btn-toggle" id="opt-same-filter" style="margin-top: 0; flex: 1.6; padding-left: 0; padding-right: 0;">Use same filter for both</button>
+          <button class="btn-toggle" id="opt-fa-fs" style="margin-top: 0; flex: 1; padding-left: 0; padding-right: 0;">fa = fs</button>
+        </div>
       </section>
 
       <!-- Signal Chain Stages -->
@@ -106,10 +129,6 @@
             </label>
             <span class="stage-label">Anti-Alias Filter</span>
           </div>
-          <div class="stage-params" id="aaf-params">
-            <div class="filter-summary" id="aaf-summary">Butterworth · fp=20 Hz · N=—</div>
-            <button class="btn-plot-filter" id="aaf-plot-btn">📈 Edit &amp; Plot Filter</button>
-          </div>
         </div>
 
         <!-- Sample & Hold -->
@@ -124,7 +143,7 @@
           <div class="stage-params" id="sh-params">
             <div class="control-row">
               <label for="sh-duty">Duty Cycle (%)</label>
-              <input type="range" id="sh-duty" min="1" max="99" value="50" step="1">
+              <input type="range" id="sh-duty" min="5" max="95" value="50" step="1">
               <span class="readout" id="sh-duty-val">50</span>
             </div>
           </div>
@@ -137,16 +156,19 @@
               <input type="checkbox" id="stage-sw" checked>
               <span class="slider"></span>
             </label>
-            <span class="stage-label">Analog Switch</span>
+            <span class="stage-label" style="display: flex; align-items: center; gap: 0.3rem;">
+              Analog Switch
+              <span class="info-tooltip">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                <span class="tooltip-content">Always counter-phase to S&amp;H</span>
+              </span>
+            </span>
           </div>
           <div class="stage-params" id="sw-params">
             <div class="control-row">
               <label for="sw-duty">Duty Cycle (%)</label>
-              <input type="range" id="sw-duty" min="1" max="99" value="50" step="1">
+              <input type="range" id="sw-duty" min="5" max="95" value="50" step="1">
               <span class="readout" id="sw-duty-val">50</span>
-            </div>
-            <div class="control-row">
-              <span class="filter-summary">Always counter-phase to S&amp;H</span>
             </div>
           </div>
         </div>
@@ -160,12 +182,14 @@
             </label>
             <span class="stage-label">Reconstruction Filter</span>
           </div>
-          <div class="stage-params" id="recon-params">
-            <div class="filter-summary" id="recon-summary">Butterworth · fp=20 Hz · N=—</div>
-            <button class="btn-plot-filter" id="recon-plot-btn">📈 Edit &amp; Plot Filter</button>
-          </div>
         </div>
       </section>
+
+      <!-- App Footer / Credits -->
+      <div class="sidebar-footer">
+        <img src="assets/logo_itba_pxl.png" alt="ITBA Logo" class="itba-logo">
+        <div class="credits">Developed by <strong>Nicolás Beade</strong></div>
+      </div>
 
     </aside>
 
@@ -180,7 +204,7 @@
         <canvas id="plot-sampled"></canvas>
       </div>
       <div class="plot-container glass-panel" id="plot-spectrum-container">
-        <h3>Frequency Spectrum</h3>
+        <h3>Output Signal Frequency Spectrum</h3>
         <canvas id="plot-spectrum"></canvas>
       </div>
     </div>
