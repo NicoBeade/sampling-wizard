@@ -184,26 +184,26 @@ body {
 /* ═══ Controls Sidebar ═══ */
 #controls {
   overflow-y: hidden; /* Hide scrollbar as requested */
-  padding: 0.2rem;
+  padding: 0.15rem;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem; /* Tighter gap */
+  gap: 0.1rem; /* Even tighter gap */
 }
 
 /* ═══ Sidebar Footer ═══ */
 .sidebar-footer {
   margin-top: auto;
-  padding: 0.4rem 0.5rem 0.2rem; /* Reduced top padding */
+  padding: 0.2rem 0.5rem 0.15rem; /* Tighter footer */
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.2rem; /* Tighter gap */
+  gap: 0.15rem;
   text-align: center;
   border-top: 1px dotted var(--glass-border);
 }
 
 .itba-logo {
-  height: 28px; /* smaller logo to save vertical space */
+  height: 22px; /* Even smaller logo to save vertical space */
   width: auto;
   opacity: 0.95;
   image-rendering: pixelated; /* Ensures pixel art logo stays crisp */
@@ -241,13 +241,13 @@ body {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: .08em;
-  margin-bottom: 0.15rem; /* Visually tighter */
-  padding-bottom: 0.1rem;
+  margin-bottom: 0.1rem; 
+  padding-bottom: 0.08rem;
   border-bottom: 1px solid var(--glass-border);
 }
 
 #sig-modal .modal-content {
-  height: 260px; /* Shorter for better aspect ratio */
+  height: 230px; /* Even shorter for perfect aspect ratio */
   display: flex;
   flex-direction: column;
 }
