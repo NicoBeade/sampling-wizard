@@ -365,6 +365,32 @@ function attachZoomHandlers(canvas, zoomKey) {
   canvas.style.cursor = 'default';
 }
 
+function attachInputScrollHandlers() {
+  document.querySelectorAll('.input-text').forEach(el => {
+    el.addEventListener('wheel', e => {
+      e.preventDefault();
+      const step = parseFloat(el.getAttribute('step')) || 1;
+      const min = parseFloat(el.getAttribute('min'));
+      const max = parseFloat(el.getAttribute('max'));
+      let val = parseFloat(el.value) || 0;
+      
+      if (e.deltaY < 0) val += step;
+      else val -= step;
+      
+      if (!isNaN(min)) val = Math.max(min, val);
+      if (!isNaN(max)) val = Math.min(max, val);
+      
+      // Fixed precision based on step
+      const precision = step < 1 ? step.toString().split('.')[1].length : 0;
+      el.value = val.toFixed(precision);
+      
+      // Trigger update
+      el.dispatchEvent(new Event('input'));
+      el.dispatchEvent(new Event('change'));
+    }, { passive: false });
+  });
+}
+
 function render() {
   if (!cachedColors) refreshColors();
   const { original, processed, spectrum } = processPipeline();
@@ -402,12 +428,12 @@ function initTheme() {
 function applyTheme(theme) {
   if (theme === 'light') {
     document.documentElement.setAttribute('data-theme', 'light');
-    document.getElementById('theme-icon').textContent = '🌙';
-    document.getElementById('theme-label').textContent = 'Dark';
+    document.getElementById('theme-icon').textContent = '';
+    document.getElementById('theme-label').textContent = 'Dark Mode';
   } else {
     document.documentElement.removeAttribute('data-theme');
-    document.getElementById('theme-icon').textContent = '☀️';
-    document.getElementById('theme-label').textContent = 'Light';
+    document.getElementById('theme-icon').textContent = '';
+    document.getElementById('theme-label').textContent = 'Light Mode';
   }
 }
 
@@ -422,11 +448,8 @@ function openFilterModal(filterKey) {
   // Populate controls from state
   document.getElementById('modal-type').value = f.type;
   document.getElementById('modal-fp').value = f.fp;
-  document.getElementById('modal-fp-val').textContent = f.fp;
   document.getElementById('modal-gp').value = f.Gp;
-  document.getElementById('modal-gp-val').textContent = f.Gp.toFixed(1);
   document.getElementById('modal-ga').value = f.Ga;
-  document.getElementById('modal-ga-val').textContent = f.Ga;
   document.getElementById('modal-fa-val').textContent = f.fp * 2;
   document.getElementById('modal-order-val').textContent = f.order || '—';
 
@@ -483,35 +506,63 @@ function renderSignalPreview() {
   const dc = parseFloat(document.getElementById('msig-dc').value) || 0;
   const phase = parseFloat(document.getElementById('msig-phase').value) || 0;
   const duty = parseFloat(document.getElementById('msig-duty').value) || 50;
-  
-  // High internal rate for smooth preview
-  const previewRate = 10000;
-  const previewFreq = 10; // Fixed 10Hz for preview cycles
+  const freq = state.sigFreq; // Use current signal freq for labels
+
+  // Plot exactly two full periods
+  const T = 1 / freq; 
+  const totalTime = 2 * T;
+  const previewRate = 1000 / totalTime; // 1000 points total
   const n = 1000;
-  const data = generateSignal(type, previewFreq, amp, dc, phase, duty, n, previewRate);
+  const data = generateSignal(type, freq, amp, dc, phase, duty, n, previewRate);
   
-  const { ctx, w, h } = getCanvasCtx(canvas);
+  const ctxResult = getCanvasCtx(canvas);
+  const ctx = ctxResult.ctx;
+  const w = ctxResult.w;
+  const h = ctxResult.h;
   if (!cachedColors) refreshColors();
   
-  const pad = { left: 30, right: 10, top: 10, bottom: 20 }, pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+  const pad = { left: 42, right: 10, top: 10, bottom: 25 };
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
   ctx.clearRect(0, 0, w, h);
   
-  let yMax = Math.max(Math.abs(amp) + Math.abs(dc), 0.1) * 1.2;
+  let yMax = Math.max(Math.abs(amp) + Math.abs(dc), 0.1) * 1.3;
   drawGrid(ctx, pad, pw, ph, 4, 4);
   
   ctx.strokeStyle = cachedColors.axis; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(pad.left, pad.top + ph / 2); ctx.lineTo(pad.left + pw, pad.top + ph / 2); ctx.stroke();
   
+  // Y-axis labels
+  ctx.fillStyle = cachedColors.label; ctx.font = '10px "JetBrains Mono",monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText(yMax.toFixed(1), pad.left - 4, pad.top);
+  ctx.fillText((-yMax).toFixed(1), pad.left - 4, pad.top + ph);
+
+  // X-axis labels (0 to 2T in ms)
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText('0', pad.left, pad.top + ph + 4);
+  ctx.fillText((totalTime * 1000).toFixed(1) + 'ms', pad.left + pw, pad.top + ph + 4);
+
+  // Axis Titles
+  ctx.font = '600 9px "Inter",sans-serif';
+  ctx.fillText('Time (2 periods)', pad.left + pw / 2, h - 8);
+  
+  ctx.save();
+  ctx.translate(10, pad.top + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('Amp', 0, 0);
+  ctx.restore();
+
   ctx.beginPath(); ctx.strokeStyle = cachedColors.original; ctx.lineWidth = 2;
   for(let i=0; i<pw; i++) {
-    const idx = Math.floor(i/pw * n);
+    const idx = Math.min(n - 1, Math.floor(i/pw * n));
     const x = pad.left + i, y = pad.top + ph/2 - (data[idx]/yMax)*(ph/2);
     i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
   }
   ctx.stroke();
 }
 
-function applySignalChanges() {
+function updateStateFromSignalModal() {
   state.waveform = document.getElementById('msig-waveform').value;
   state.sigAmp = parseFloat(document.getElementById('msig-amp').value) || 0.1;
   state.sigDC = parseFloat(document.getElementById('msig-dc').value) || 0;
@@ -519,21 +570,19 @@ function applySignalChanges() {
   state.sigDuty = parseFloat(document.getElementById('msig-duty').value) || 50;
   
   updateSignalSummary();
-  closeSignalModal();
+  renderSignalPreview();
+  scheduleRender();
 }
 
 function onModalParamChange() {
   if (!activeModalFilter) return;
   const f = state.stages[activeModalFilter];
   f.type = document.getElementById('modal-type').value;
-  if (!state.faFromSampling) f.fp = parseFloat(document.getElementById('modal-fp').value);
-  f.Gp = parseFloat(document.getElementById('modal-gp').value);
-  f.Ga = parseFloat(document.getElementById('modal-ga').value);
+  if (!state.faFromSampling) f.fp = parseFloat(document.getElementById('modal-fp').value) || 5;
+  f.Gp = parseFloat(document.getElementById('modal-gp').value) || -1;
+  f.Ga = parseFloat(document.getElementById('modal-ga').value) || -40;
 
-  document.getElementById('modal-fp-val').textContent = f.fp;
-  document.getElementById('modal-gp-val').textContent = f.Gp.toFixed(1);
-  document.getElementById('modal-ga-val').textContent = f.Ga;
-  document.getElementById('modal-fa-val').textContent = f.fp * 2;
+  document.getElementById('modal-fa-val').textContent = (f.fp * 2).toFixed(0);
 
   // Sync if same filter
   if (state.sameFilter) {
@@ -716,7 +765,6 @@ function initUI() {
   // Signal edit button
   document.getElementById('sig-plot-btn').addEventListener('click', openSignalModal);
   document.getElementById('sig-modal-close').addEventListener('click', closeSignalModal);
-  document.getElementById('sig-apply-btn').addEventListener('click', applySignalChanges);
   
   // Signal modal live preview updates
   ['msig-waveform', 'msig-amp', 'msig-dc', 'msig-phase', 'msig-duty'].forEach(id => {
@@ -725,7 +773,7 @@ function initUI() {
       if(id === 'msig-waveform') {
         document.getElementById('msig-duty-row').style.display = el.value === 'square' ? '' : 'none';
       }
-      renderSignalPreview();
+      updateStateFromSignalModal();
     });
   });
 
@@ -825,6 +873,7 @@ function initUI() {
   attachZoomHandlers(canvasOriginal, 'time');
   attachZoomHandlers(canvasSampled, 'time');
   attachZoomHandlers(canvasSpectrum, 'freq');
+  attachInputScrollHandlers();
   redesignFilter('aaf');
   redesignFilter('recon');
   updateSignalSummary();

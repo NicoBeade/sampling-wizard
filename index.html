@@ -36,9 +36,8 @@
       <section class="control-group" id="signal-section">
         <h2>Signal Source</h2>
         <div class="stage-params filter-box" id="sig-params">
-          <div class="stage-label">Original Signal</div>
           <div class="filter-summary" id="sig-summary">Sine · 10 Hz · 1.00 V · 0.0 Vdc</div>
-          <button class="btn-edit" id="sig-plot-btn">Edit &amp; Plot Signal</button>
+          <button class="btn-edit" id="sig-plot-btn">Edit Signal</button>
         </div>
       </section>
 
@@ -219,7 +218,6 @@
             <label for="msig-duty">Duty Cycle (%)</label>
             <input type="number" id="msig-duty" step="1" min="5" max="95" value="50" class="input-text">
           </div>
-          <button class="btn-edit" id="sig-apply-btn" style="margin-top: 1rem;">Apply Changes</button>
         </div>
         <div class="modal-plots">
           <div class="modal-plot-row" style="height: 200px;">
@@ -253,18 +251,15 @@
           </div>
           <div class="control-row">
             <label for="modal-fp">fp (Hz)</label>
-            <input type="range" id="modal-fp" min="5" max="500" value="20" step="1">
-            <span class="readout" id="modal-fp-val">20</span>
+            <input type="number" id="modal-fp" min="5" max="500" value="20" step="1" class="input-text">
           </div>
           <div class="control-row">
             <label for="modal-gp">Gp (dB)</label>
-            <input type="range" id="modal-gp" min="-3" max="-0.5" value="-1" step="0.1">
-            <span class="readout" id="modal-gp-val">-1.0</span>
+            <input type="number" id="modal-gp" min="-3" max="-0.5" value="-1" step="0.1" class="input-text">
           </div>
           <div class="control-row">
             <label for="modal-ga">Ga (dB)</label>
-            <input type="range" id="modal-ga" min="-80" max="-20" value="-40" step="1">
-            <span class="readout" id="modal-ga-val">-40</span>
+            <input type="number" id="modal-ga" min="-80" max="-20" value="-40" step="1" class="input-text">
           </div>
           <div class="filter-info">
             <span>fa: <strong id="modal-fa-val">40</strong> Hz</span>
