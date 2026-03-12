@@ -247,7 +247,7 @@ body {
 }
 
 #sig-modal .modal-content {
-  height: 330px; /* Further reduced height */
+  height: 260px; /* Shorter for better aspect ratio */
   display: flex;
   flex-direction: column;
 }
