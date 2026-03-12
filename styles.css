@@ -658,6 +658,34 @@ body.modal-open #app-main {
   width: 100%;
 }
 
+.input-text {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  padding: 0.2rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  width: 60px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+[data-theme="light"] .input-text {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #000;
+}
+
+.input-text:focus {
+  border-color: var(--accent-1);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="light"] .input-text:focus {
+  background: rgba(0, 0, 0, 0.1);
+}
+
 .modal-controls .readout {
   font-size: 0.6rem;
 }

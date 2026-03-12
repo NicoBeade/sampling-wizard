@@ -11,7 +11,6 @@ const N = 4096;
 const state = {
   waveform: 'sine', sigFreq: 10, sigAmp: 1, sigDC: 0, sigPhase: 0, sigDuty: 50,
   samplingFreq: 80,
-  samplingFreq: 80,
   stages: {
     aaf: { enabled: true, type: 'butterworth', fp: 20, Gp: -1, Ga: -40, sos: [], order: 0 },
     sh: { enabled: true, duty: 50 },
@@ -127,6 +126,14 @@ function updateSidebarSummary(key) {
   };
   const name = typeNames[f.type] || f.type;
   el.textContent = `${name} · fp=${f.fp} Hz · fa=${f.fp * 2} Hz · N=${f.order || '—'}`;
+}
+
+function updateSignalSummary() {
+  const { waveform, sigFreq, sigAmp, sigDC } = state;
+  const el = document.getElementById('sig-summary');
+  if (!el) return;
+  const name = waveform.charAt(0).toUpperCase() + waveform.slice(1);
+  el.textContent = `${name} · ${sigFreq} Hz · ${sigAmp.toFixed(2)} V · ${sigDC.toFixed(1)} Vdc`;
 }
 
 /* ─── §6 DSP Pipeline ─── */
@@ -444,6 +451,77 @@ function closeFilterModal() {
   activeModalFilter = null;
 }
 
+/* ─── §11b Signal Modal Editor ─── */
+function openSignalModal() {
+  // Populate from current state
+  document.getElementById('msig-waveform').value = state.waveform;
+  document.getElementById('msig-amp').value = state.sigAmp;
+  document.getElementById('msig-dc').value = state.sigDC;
+  document.getElementById('msig-phase').value = state.sigPhase;
+  document.getElementById('msig-duty').value = state.sigDuty;
+  
+  document.getElementById('msig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
+  
+  document.getElementById('sig-modal').style.display = '';
+  document.body.classList.add('modal-open');
+  
+  renderSignalPreview();
+}
+
+function closeSignalModal() {
+  document.getElementById('sig-modal').style.display = 'none';
+  document.body.classList.remove('modal-open');
+  scheduleRender();
+}
+
+function renderSignalPreview() {
+  const canvas = document.getElementById('modal-sig-preview');
+  if (!canvas) return;
+  
+  const type = document.getElementById('msig-waveform').value;
+  const amp = parseFloat(document.getElementById('msig-amp').value) || 0;
+  const dc = parseFloat(document.getElementById('msig-dc').value) || 0;
+  const phase = parseFloat(document.getElementById('msig-phase').value) || 0;
+  const duty = parseFloat(document.getElementById('msig-duty').value) || 50;
+  
+  // High internal rate for smooth preview
+  const previewRate = 10000;
+  const previewFreq = 10; // Fixed 10Hz for preview cycles
+  const n = 1000;
+  const data = generateSignal(type, previewFreq, amp, dc, phase, duty, n, previewRate);
+  
+  const { ctx, w, h } = getCanvasCtx(canvas);
+  if (!cachedColors) refreshColors();
+  
+  const pad = { left: 30, right: 10, top: 10, bottom: 20 }, pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, w, h);
+  
+  let yMax = Math.max(Math.abs(amp) + Math.abs(dc), 0.1) * 1.2;
+  drawGrid(ctx, pad, pw, ph, 4, 4);
+  
+  ctx.strokeStyle = cachedColors.axis; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.left, pad.top + ph / 2); ctx.lineTo(pad.left + pw, pad.top + ph / 2); ctx.stroke();
+  
+  ctx.beginPath(); ctx.strokeStyle = cachedColors.original; ctx.lineWidth = 2;
+  for(let i=0; i<pw; i++) {
+    const idx = Math.floor(i/pw * n);
+    const x = pad.left + i, y = pad.top + ph/2 - (data[idx]/yMax)*(ph/2);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+}
+
+function applySignalChanges() {
+  state.waveform = document.getElementById('msig-waveform').value;
+  state.sigAmp = parseFloat(document.getElementById('msig-amp').value) || 0.1;
+  state.sigDC = parseFloat(document.getElementById('msig-dc').value) || 0;
+  state.sigPhase = parseFloat(document.getElementById('msig-phase').value) || 0;
+  state.sigDuty = parseFloat(document.getElementById('msig-duty').value) || 50;
+  
+  updateSignalSummary();
+  closeSignalModal();
+}
+
 function onModalParamChange() {
   if (!activeModalFilter) return;
   const f = state.stages[activeModalFilter];
@@ -631,19 +709,25 @@ function initUI() {
     }, 150);
     
     // We can immediately render without the active filter recalculations giving a somewhat accurate visual
+    updateSignalSummary();
     scheduleRender();
   });
-  bindSlider('sig-amp', 'sigAmp', v => v.toFixed(2));
-  bindSlider('sig-dc', 'sigDC', v => v.toFixed(2));
-  bindSlider('sig-phase', 'sigPhase', v => v);
-  bindSlider('sig-duty', 'sigDuty', v => v);
 
-  document.getElementById('waveform-select').addEventListener('change', e => {
-    state.waveform = e.target.value;
-    document.getElementById('sig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
-    scheduleRender();
+  // Signal edit button
+  document.getElementById('sig-plot-btn').addEventListener('click', openSignalModal);
+  document.getElementById('sig-modal-close').addEventListener('click', closeSignalModal);
+  document.getElementById('sig-apply-btn').addEventListener('click', applySignalChanges);
+  
+  // Signal modal live preview updates
+  ['msig-waveform', 'msig-amp', 'msig-dc', 'msig-phase', 'msig-duty'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', () => {
+      if(id === 'msig-waveform') {
+        document.getElementById('msig-duty-row').style.display = el.value === 'square' ? '' : 'none';
+      }
+      renderSignalPreview();
+    });
   });
-  document.getElementById('sig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
 
   const sampEl = document.getElementById('sampling-freq'), sampRO = document.getElementById('sampling-freq-val');
   sampEl.addEventListener('input', () => {
@@ -743,6 +827,7 @@ function initUI() {
   attachZoomHandlers(canvasSpectrum, 'freq');
   redesignFilter('aaf');
   redesignFilter('recon');
+  updateSignalSummary();
   render();
 }
 

@@ -35,47 +35,17 @@
       <!-- Signal Source -->
       <section class="control-group" id="signal-section">
         <h2>Signal Source</h2>
-        <div class="control-row">
-          <label for="waveform-select">Waveform</label>
-          <select id="waveform-select">
-            <option value="sine">Sine</option>
-            <option value="square">Square</option>
-            <option value="triangle">Triangle</option>
-            <option value="sawtooth">Sawtooth</option>
-          </select>
-        </div>
-        <div class="control-row">
-          <label for="sig-freq">Frequency (Hz)</label>
-          <input type="range" id="sig-freq" min="1" max="200" value="10" step="1">
-          <span class="readout" id="sig-freq-val">10</span>
-        </div>
-        </div>
-        <div class="control-row">
-          <label for="sig-amp">Amplitude</label>
-          <input type="range" id="sig-amp" min="0.1" max="2" value="1" step="0.05">
-          <span class="readout" id="sig-amp-val">1.00</span>
-        </div>
-        <div class="control-row">
-          <label for="sig-dc">DC Offset</label>
-          <input type="range" id="sig-dc" min="-2" max="2" value="0" step="0.05">
-          <span class="readout" id="sig-dc-val">0.00</span>
-        </div>
-        <div class="control-row">
-          <label for="sig-phase">Phase (°)</label>
-          <input type="range" id="sig-phase" min="0" max="360" value="0" step="1">
-          <span class="readout" id="sig-phase-val">0</span>
-        </div>
-        <div class="control-row" id="sig-duty-row">
-          <label for="sig-duty">Duty Cycle (%)</label>
-          <input type="range" id="sig-duty" min="5" max="95" value="50" step="1">
-          <span class="readout" id="sig-duty-val">50</span>
+        <div class="stage-params filter-box" id="sig-params">
+          <div class="stage-label">Original Signal</div>
+          <div class="filter-summary" id="sig-summary">Sine · 10 Hz · 1.00 V · 0.0 Vdc</div>
+          <button class="btn-edit" id="sig-plot-btn">Edit &amp; Plot Signal</button>
         </div>
       </section>
 
-      <!-- Sampling -->
+      <!-- Signal and Sampling Frequency -->
       <section class="control-group" id="sampling-section">
         <h2 style="display: flex; align-items: center; justify-content: space-between;">
-          Sampling
+          Signal &amp; Fs
           <span class="info-tooltip">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             <span class="tooltip-content">
@@ -85,6 +55,11 @@
             </span>
           </span>
         </h2>
+        <div class="control-row">
+          <label for="sig-freq">Signal Freq (Hz)</label>
+          <input type="range" id="sig-freq" min="1" max="200" value="10" step="1">
+          <span class="readout" id="sig-freq-val">10</span>
+        </div>
         <div class="control-row">
           <label for="sampling-freq">Sampling Freq (Hz)</label>
           <input type="range" id="sampling-freq" min="10" max="1000" value="80" step="1">
@@ -209,6 +184,52 @@
       </div>
     </div>
   </main>
+
+  <!-- ─── Signal Editor Modal ─── -->
+  <div id="sig-modal" class="modal-overlay" style="display:none">
+    <div class="modal-content glass-panel" style="max-width: 450px;">
+      <div class="modal-header">
+        <h3>Edit Signal</h3>
+        <button id="sig-modal-close" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-controls">
+          <div class="control-row">
+            <label for="msig-waveform">Waveform</label>
+            <select id="msig-waveform">
+              <option value="sine">Sine</option>
+              <option value="square">Square</option>
+              <option value="triangle">Triangle</option>
+              <option value="sawtooth">Sawtooth</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <label for="msig-amp">Amplitude (V)</label>
+            <input type="number" id="msig-amp" step="0.1" min="0.1" max="5" value="1.0" class="input-text">
+          </div>
+          <div class="control-row">
+            <label for="msig-dc">DC Offset (V)</label>
+            <input type="number" id="msig-dc" step="0.1" min="-5" max="5" value="0.0" class="input-text">
+          </div>
+          <div class="control-row">
+            <label for="msig-phase">Phase (°)</label>
+            <input type="number" id="msig-phase" step="1" min="0" max="360" value="0" class="input-text">
+          </div>
+          <div class="control-row" id="msig-duty-row">
+            <label for="msig-duty">Duty Cycle (%)</label>
+            <input type="number" id="msig-duty" step="1" min="5" max="95" value="50" class="input-text">
+          </div>
+          <button class="btn-edit" id="sig-apply-btn" style="margin-top: 1rem;">Apply Changes</button>
+        </div>
+        <div class="modal-plots">
+          <div class="modal-plot-row" style="height: 200px;">
+            <span class="modal-plot-label">Signal Preview</span>
+            <canvas id="modal-sig-preview"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ─── Filter Editor Modal ─── -->
   <div id="filter-modal" class="modal-overlay" style="display:none">
