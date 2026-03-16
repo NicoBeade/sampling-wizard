@@ -6,7 +6,17 @@
 'use strict';
 
 /* ─── §1 Constants & State ─── */
-const N = 16384; // Increased for higher frequency resolution
+const BASE_N = 16384; 
+function getN() {
+  if (state.waveform === 'bitstream') {
+    // 1024 samples per symbol provides very high precision for filtering.
+    const needed = state.sigNumSymbols * 1024;
+    let n = BASE_N;
+    while (n < needed && n < 524288) n <<= 1;
+    return n;
+  }
+  return BASE_N;
+}
 
 const state = {
   waveform: 'sine', sigFreq: 1000, sigAmp: 1, sigDC: 0, sigPhase: 0, sigDuty: 50,
@@ -35,19 +45,12 @@ function getInternalRate() {
   const maxContFreq = Math.max(signalBW, state.amEnabled ? state.amFreq + signalBW : 0);
   const minContFreq = state.amEnabled ? Math.min(signalBW, state.amFreq) : signalBW;
   
-  // For Bitstream, we define the base window duration to fit at least state.sigNumSymbols
-  // Otherwise, we default to 5 periods of the lowest frequency.
-  let targetPeriods = 5;
-  if (state.waveform === 'bitstream') {
-    // Each "period" of minContFreq (symbolRate/2) covers 2 symbols roughly.
-    targetPeriods = Math.max(5, state.sigNumSymbols / 2 + 1);
-  }
-
-  const baseRate = N * (minContFreq > 0.1 ? minContFreq : 1) / targetPeriods;
+  const targetPeriods = state.waveform === 'bitstream' ? Math.max(5, state.sigNumSymbols) : 5;
+  const baseRate = getN() * (minContFreq > 0.1 ? minContFreq : 1) / targetPeriods;
   // Increase rate to support the 8x spectrum view without aliasing in the sim
   return Math.max(baseRate, state.samplingFreq * 24, maxContFreq * 10); 
 }
-function getTWindow() { return N / getInternalRate(); }
+function getTWindow() { return getN() / getInternalRate(); }
 
 /* ─── §1b Bitstream Utils ─── */
 function rrcPulse(t, T, beta) {
@@ -84,11 +87,12 @@ function generateBitstream(n, rate, symbolRate, rolloff, amp) {
   
   for (let i = 0; i < n; i++) {
     const t = i / rate;
-    const centerSymbolIdx = Math.floor(t / T);
+    const centerSymbolIdx = Math.floor(t / T - 0.5); 
     let val = 0;
     for (let s = centerSymbolIdx - span; s <= centerSymbolIdx + span; s++) {
       if (s >= 0 && s < symbols.length) {
-        val += symbols[s] * rrcPulse(t - s * T, T, rolloff);
+        // Center symbol s at (s + 0.5) * T
+        val += symbols[s] * rrcPulse(t - (s + 0.5) * T, T, rolloff);
       }
     }
     out[i] = val * amp * Math.sqrt(T); // Normalized amp
@@ -222,11 +226,13 @@ function updateSignalSummary() {
 /* ─── §6 DSP Pipeline ─── */
 function processPipeline() {
   const { waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, amEnabled, amFreq, samplingFreq, stages } = state;
-  const original = generateSignal(waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, N, getInternalRate(), amEnabled, amFreq);
+  const n = getN();
+  const rate = getInternalRate();
+  const original = generateSignal(waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, n, rate, amEnabled, amFreq);
   let sig = original;
   if (stages.aaf.enabled && stages.aaf.sos.length > 0) sig = applySOS(sig, stages.aaf.sos);
-  const shPulse = controlPulse(N, getInternalRate(), samplingFreq, stages.sh.duty, 0);
-  const swPulse = controlPulse(N, getInternalRate(), samplingFreq, stages.sw.duty, stages.sh.duty);
+  const shPulse = controlPulse(n, rate, samplingFreq, stages.sh.duty, 0);
+  const swPulse = controlPulse(n, rate, samplingFreq, stages.sw.duty, stages.sh.duty);
   if (stages.sh.enabled) sig = sampleAndHold(sig, shPulse);
   if (stages.sw.enabled) sig = analogSwitch(sig, swPulse);
   if (stages.recon.enabled && stages.recon.sos.length > 0) sig = applySOS(sig, stages.recon.sos);
@@ -600,15 +606,22 @@ function openSignalModal() {
   
   document.getElementById('msig-am-enabled').checked = state.amEnabled;
   document.getElementById('msig-am-freq').value = state.amFreq;
-  document.getElementById('msig-am-freq-row').style.display = state.amEnabled ? '' : 'none';
+
+  const isBitstream = state.waveform === 'bitstream';
+  const isSquare = state.waveform === 'square';
+
+  document.getElementById('msig-amp-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-dc-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-phase-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-am-freq-row').style.display = (!isBitstream && state.amEnabled) ? '' : 'none';
+  // AM toggle itself should also be hidden for Bitstream based on "only leave..."
+  document.getElementById('msig-am-enabled').closest('.control-row').style.display = isBitstream ? 'none' : '';
+
+  document.getElementById('msig-duty-row').style.display = isSquare ? '' : 'none';
   
-  document.getElementById('msig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
-  document.getElementById('msig-dc-row').style.display = state.waveform === 'bitstream' ? 'none' : '';
-  document.getElementById('msig-phase-row').style.display = state.waveform === 'bitstream' ? 'none' : '';
-  
-  document.getElementById('msig-symbol-rate-row').style.display = state.waveform === 'bitstream' ? '' : 'none';
-  document.getElementById('msig-rolloff-row').style.display = state.waveform === 'bitstream' ? '' : 'none';
-  document.getElementById('msig-symbol-count-row').style.display = state.waveform === 'bitstream' ? '' : 'none';
+  document.getElementById('msig-symbol-rate-row').style.display = isBitstream ? '' : 'none';
+  document.getElementById('msig-rolloff-row').style.display = isBitstream ? '' : 'none';
+  document.getElementById('msig-symbol-count-row').style.display = isBitstream ? '' : 'none';
 
   document.getElementById('msig-symbol-rate').value = state.sigSymbolRate;
   document.getElementById('msig-rolloff').value = state.sigRolloff;
@@ -712,18 +725,21 @@ function updateStateFromSignalModal() {
   
   state.amEnabled = document.getElementById('msig-am-enabled').checked;
   state.amFreq = parseFloat(document.getElementById('msig-am-freq').value) || 1000;
-  
-  document.getElementById('msig-am-freq-row').style.display = state.amEnabled ? '' : 'none';
-  document.getElementById('msig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
-  document.getElementById('msig-dc-row').style.display = state.waveform === 'bitstream' ? 'none' : '';
-  document.getElementById('msig-phase-row').style.display = state.waveform === 'bitstream' ? 'none' : '';
-  
-  document.getElementById('msig-symbol-rate-row').style.display = state.waveform === 'bitstream' ? '' : 'none';
-  document.getElementById('msig-rolloff-row').style.display = state.waveform === 'bitstream' ? '' : 'none';
-  document.getElementById('msig-symbol-count-row').style.display = state.waveform === 'bitstream' ? '' : 'none';
-  
   state.sigNumSymbols = parseInt(document.getElementById('msig-symbol-count').value) || 10;
-  
+
+  const isBitstream = state.waveform === 'bitstream';
+  const isSquare = state.waveform === 'square';
+
+  document.getElementById('msig-amp-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-dc-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-phase-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-am-freq-row').style.display = (!isBitstream && state.amEnabled) ? '' : 'none';
+  document.getElementById('msig-am-enabled').closest('.control-row').style.display = isBitstream ? 'none' : '';
+  document.getElementById('msig-duty-row').style.display = isSquare ? '' : 'none';
+  document.getElementById('msig-symbol-rate-row').style.display = isBitstream ? '' : 'none';
+  document.getElementById('msig-rolloff-row').style.display = isBitstream ? '' : 'none';
+  document.getElementById('msig-symbol-count-row').style.display = isBitstream ? '' : 'none';
+
   autoZoomTime();
   updateSignalSummary();
   renderSignalPreview();
@@ -959,9 +975,11 @@ function initUI() {
       if(id === 'msig-waveform') {
         const isSquare = el.value === 'square';
         const isBitstream = el.value === 'bitstream';
-        document.getElementById('msig-duty-row').style.display = isSquare ? '' : 'none';
+        document.getElementById('msig-amp-row').style.display = isBitstream ? 'none' : '';
         document.getElementById('msig-dc-row').style.display = isBitstream ? 'none' : '';
         document.getElementById('msig-phase-row').style.display = isBitstream ? 'none' : '';
+        document.getElementById('msig-am-enabled').closest('.control-row').style.display = isBitstream ? 'none' : '';
+        document.getElementById('msig-duty-row').style.display = isSquare ? '' : 'none';
         document.getElementById('msig-symbol-rate-row').style.display = isBitstream ? '' : 'none';
         document.getElementById('msig-rolloff-row').style.display = isBitstream ? '' : 'none';
         document.getElementById('msig-symbol-count-row').style.display = isBitstream ? '' : 'none';
