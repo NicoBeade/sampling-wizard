@@ -6,32 +6,40 @@
 'use strict';
 
 /* ─── §1 Constants & State ─── */
-const N = 4096;
+const N = 16384; // Increased for higher frequency resolution
 
 const state = {
-  waveform: 'sine', sigFreq: 10, sigAmp: 1, sigDC: 0, sigPhase: 0, sigDuty: 50,
-  samplingFreq: 80,
+  waveform: 'sine', sigFreq: 1000, sigAmp: 1, sigDC: 0, sigPhase: 0, sigDuty: 50,
+  amEnabled: false, amFreq: 1000,
+  samplingFreq: 8000,
   stages: {
-    aaf: { enabled: true, type: 'butterworth', fp: 20, Gp: -1, Ga: -40, sos: [], order: 0 },
+    aaf: { enabled: true, type: 'butterworth', fp: 1000, Gp: -1, Ga: -40, sos: [], order: 0 },
     sh: { enabled: true, duty: 50 },
     sw: { enabled: true, duty: 50 },
-    recon: { enabled: true, type: 'butterworth', fp: 20, Gp: -1, Ga: -40, sos: [], order: 0 },
+    recon: { enabled: true, type: 'butterworth', fp: 1000, Gp: -1, Ga: -40, sos: [], order: 0 },
   },
   sameFilter: false,
   faFromSampling: false,
   zoom: { time: { scale: 1, offset: 0 }, freq: { scale: 1, offset: 0 } },
 };
 
-function getTWindow() { return 5 / state.sigFreq; }
-function getInternalRate() { return N / getTWindow(); }
+function getInternalRate() { 
+  const maxContFreq = Math.max(state.sigFreq, state.amEnabled ? state.amFreq + state.sigFreq : 0);
+  const minContFreq = state.amEnabled ? Math.min(state.sigFreq, state.amFreq) : state.sigFreq;
+  const baseRate = N * (minContFreq > 0.1 ? minContFreq : 1) / 5;
+  // Increase rate to support the 8x spectrum view without aliasing in the sim
+  return Math.max(baseRate, state.samplingFreq * 24, maxContFreq * 10); 
+}
+function getTWindow() { return N / getInternalRate(); }
 
 let activeModalFilter = null; // 'aaf' or 'recon'
 /* ─── §2 Signal Generator ─── */
-function generateSignal(type, freq, amp, dc, phaseDeg, duty, n, rate) {
+function generateSignal(type, freq, amp, dc, phaseDeg, duty, n, rate, amEnabled, amFreq) {
   const out = new Float64Array(n);
   const phaseRad = phaseDeg * Math.PI / 180;
   for (let i = 0; i < n; i++) {
-    const phi = 2 * Math.PI * freq * (i / rate) + phaseRad;
+    const t = i / rate;
+    const phi = 2 * Math.PI * freq * t + phaseRad;
     let v = 0;
     switch (type) {
       case 'sine': v = Math.sin(phi); break;
@@ -39,7 +47,9 @@ function generateSignal(type, freq, amp, dc, phaseDeg, duty, n, rate) {
       case 'triangle': { const f = ((phi / (2 * Math.PI)) % 1 + 1) % 1; v = f < 0.5 ? (4 * f - 1) : (3 - 4 * f); break; }
       case 'sawtooth': { const f = ((phi / (2 * Math.PI)) % 1 + 1) % 1; v = 2 * f - 1; break; }
     }
-    out[i] = v * amp + dc;
+    v = v * amp + dc;
+    if (amEnabled) v *= Math.cos(2 * Math.PI * amFreq * t);
+    out[i] = v;
   }
   return out;
 }
@@ -98,7 +108,7 @@ function fft(real, imag) {
 
 function magnitudeSpectrum(signal) {
   const n = signal.length, re = new Float64Array(n), im = new Float64Array(n);
-  for (let i = 0; i < n; i++) re[i] = signal[i] * 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
+  for (let i = 0; i < n; i++) re[i] = signal[i];
   fft(re, im);
   const halfN = (n >> 1) + 1, mag = new Float64Array(halfN);
   for (let i = 0; i < halfN; i++) mag[i] = 20 * Math.log10(Math.max(Math.sqrt(re[i] * re[i] + im[i] * im[i]) / n, 1e-12));
@@ -129,17 +139,20 @@ function updateSidebarSummary(key) {
 }
 
 function updateSignalSummary() {
-  const { waveform, sigFreq, sigAmp, sigDC } = state;
+  const { waveform, sigFreq, sigAmp, sigDC, amEnabled, amFreq } = state;
   const el = document.getElementById('sig-summary');
   if (!el) return;
   const name = waveform.charAt(0).toUpperCase() + waveform.slice(1);
-  el.textContent = `${name} · ${sigFreq} Hz · ${sigAmp.toFixed(2)} V · ${sigDC.toFixed(1)} Vdc`;
+  let txt = `${name} · ${sigFreq} Hz · ${sigAmp.toFixed(2)} V`;
+  if (sigDC !== 0) txt += ` · ${sigDC.toFixed(1)} Vdc`;
+  if (amEnabled) txt += ` · AM (${amFreq} Hz)`;
+  el.textContent = txt;
 }
 
 /* ─── §6 DSP Pipeline ─── */
 function processPipeline() {
-  const { waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, samplingFreq, stages } = state;
-  const original = generateSignal(waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, N, getInternalRate());
+  const { waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, amEnabled, amFreq, samplingFreq, stages } = state;
+  const original = generateSignal(waveform, sigFreq, sigAmp, sigDC, sigPhase, sigDuty, N, getInternalRate(), amEnabled, amFreq);
   let sig = original;
   if (stages.aaf.enabled && stages.aaf.sos.length > 0) sig = applySOS(sig, stages.aaf.sos);
   const shPulse = controlPulse(N, getInternalRate(), samplingFreq, stages.sh.duty, 0);
@@ -227,11 +240,17 @@ function plotTime(canvas, data, color) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.font = '10px "JetBrains Mono",monospace';
   const z = state.zoom.time;
-  const tPrec = z.scale > 20 ? 2 : (z.scale > 2 ? 1 : 0);
+  const tTotal = getTWindow() * 1000; // ms
+  // Dynamic precision: more decimals for small time windows
+  let tPrec = 1;
+  if (tTotal / z.scale < 0.1) tPrec = 4;
+  else if (tTotal / z.scale < 1) tPrec = 3;
+  else if (tTotal / z.scale < 10) tPrec = 2;
+
   for (let i = 0; i <= 8; i += 2) { 
     const x = pad.left + (i / 8) * pw; 
     const tFraction = z.offset + (i / 8) / z.scale;
-    ctx.fillText((getTWindow() * 1000 * tFraction).toFixed(tPrec), x, pad.top + ph + 4); 
+    ctx.fillText((tTotal * tFraction).toFixed(tPrec), x, pad.top + ph + 4); 
   }
   
   ctx.font = '600 10px "Inter",sans-serif';
@@ -247,7 +266,7 @@ function plotTime(canvas, data, color) {
   ctx.stroke();
 }
 
-function plotSpectrum(canvas, magDb, maxFreq) {
+function plotSpectrum(canvas, magDb, nyquist, displayLimit) {
   const { ctx, w, h } = getCanvasCtx(canvas);
   const pad = { left: 42, right: 8, top: 6, bottom: 20 }, pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
   ctx.clearRect(0, 0, w, h);
@@ -275,17 +294,33 @@ function plotSpectrum(canvas, magDb, maxFreq) {
   for (let i = 0; i <= 8; i += 2) { 
     const x = pad.left + (i / 8) * pw; 
     const fFraction = z.offset + (i / 8) / z.scale;
-    ctx.fillText((maxFreq * fFraction).toFixed(fPrec), x, pad.top + ph + 4); 
+    ctx.fillText((displayLimit * fFraction).toFixed(fPrec), x, pad.top + ph + 4); 
   }
   
   ctx.font = '600 10px "Inter",sans-serif';
   ctx.fillText('Frequency (Hz)', pad.left + pw / 2, h - 8);
 
+  // Vertical orange opaque semi-transparent lines at multiples of sampling frequency
+  const fs = state.samplingFreq;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 140, 0, 0.35)'; // Orange opaque semi-transparent
+  ctx.setLineDash([4, 2]);
+  for (let k = 1; k * fs <= displayLimit; k++) {
+    const fLoc = k * fs;
+    const fraction = (fLoc / displayLimit - z.offset) * z.scale;
+    if (fraction >= 0 && fraction <= 1) {
+      const x = pad.left + fraction * pw;
+      ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ph); ctx.stroke();
+    }
+  }
+  ctx.restore();
+
   const nBins = magDb.length;
   ctx.beginPath(); ctx.strokeStyle = cachedColors.spectrum; ctx.lineWidth = 1.4;
   for (let px = 0; px < pw; px++) {
     const fraction = z.offset + (px / pw) / z.scale;
-    const bin = Math.min(nBins - 1, Math.floor(fraction * nBins));
+    const freq = fraction * displayLimit;
+    const bin = Math.min(nBins - 1, Math.floor((freq / nyquist) * nBins));
     const db = Math.max(magDb[bin], dbMin);
     const x = pad.left + px, y = pad.top + (1 - (db - dbMin) / dbRange) * ph;
     px === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
@@ -394,9 +429,13 @@ function attachInputScrollHandlers() {
 function render() {
   if (!cachedColors) refreshColors();
   const { original, processed, spectrum } = processPipeline();
+  const nyquist = getInternalRate() / 2;
+  const maxKeyFreq = Math.max(state.sigFreq, state.samplingFreq, state.amEnabled ? state.amFreq : 0);
+  const displayLimit = Math.min(nyquist, 8 * maxKeyFreq);
+  
   plotTime(canvasOriginal, original, cachedColors.original);
   plotTime(canvasSampled, processed, cachedColors.processed);
-  plotSpectrum(canvasSpectrum, spectrum, getInternalRate() / 2);
+  plotSpectrum(canvasSpectrum, spectrum, nyquist, displayLimit);
   canvasSizesDirty = false;
 }
 
@@ -483,6 +522,10 @@ function openSignalModal() {
   document.getElementById('msig-phase').value = state.sigPhase;
   document.getElementById('msig-duty').value = state.sigDuty;
   
+  document.getElementById('msig-am-enabled').checked = state.amEnabled;
+  document.getElementById('msig-am-freq').value = state.amFreq;
+  document.getElementById('msig-am-freq-row').style.display = state.amEnabled ? '' : 'none';
+  
   document.getElementById('msig-duty-row').style.display = state.waveform === 'square' ? '' : 'none';
   
   document.getElementById('sig-modal').style.display = '';
@@ -508,12 +551,17 @@ function renderSignalPreview() {
   const duty = parseFloat(document.getElementById('msig-duty').value) || 50;
   const freq = state.sigFreq; // Use current signal freq for labels
 
-  // Plot exactly two full periods
-  const T = 1 / freq; 
+  const amEnabled = document.getElementById('msig-am-enabled').checked;
+  const amFreq = parseFloat(document.getElementById('msig-am-freq').value) || 0;
+
+  // Plot exactly two full periods of the lowest frequency
+  const lowestFreq = amEnabled ? Math.min(freq, amFreq) : freq;
+  const T = 1 / (lowestFreq || 1); 
   const totalTime = 2 * T;
   const previewRate = 1000 / totalTime; // 1000 points total
   const n = 1000;
-  const data = generateSignal(type, freq, amp, dc, phase, duty, n, previewRate);
+  
+  const data = generateSignal(type, freq, amp, dc, phase, duty, n, previewRate, amEnabled, amFreq);
   
   const ctxResult = getCanvasCtx(canvas);
   const ctx = ctxResult.ctx;
@@ -569,9 +617,28 @@ function updateStateFromSignalModal() {
   state.sigPhase = parseFloat(document.getElementById('msig-phase').value) || 0;
   state.sigDuty = parseFloat(document.getElementById('msig-duty').value) || 50;
   
+  state.amEnabled = document.getElementById('msig-am-enabled').checked;
+  state.amFreq = parseFloat(document.getElementById('msig-am-freq').value) || 1000;
+  
+  document.getElementById('msig-am-freq-row').style.display = state.amEnabled ? '' : 'none';
+  
+  autoZoomTime();
   updateSignalSummary();
   renderSignalPreview();
   scheduleRender();
+}
+
+function autoZoomTime() {
+  // Auto-adjust zoom to show ~5 cycles of the lowest frequency. 
+  // Target duration = 5 / lowestFreq
+  // Current full window duration = getTWindow()
+  // We want the visible part to be targetDur.
+  // Scale = Window / Target
+  const lowestFreq = state.amEnabled ? Math.min(state.sigFreq, state.amFreq) : state.sigFreq;
+  // Handle edge case where lowestFreq is 0 or extremely small
+  const targetDur = lowestFreq > 0.1 ? 5 / lowestFreq : 5;
+  state.zoom.time.scale = Math.max(1, getTWindow() / targetDur);
+  state.zoom.time.offset = 0;
 }
 
 function onModalParamChange() {
@@ -633,7 +700,7 @@ function drawModalSinglePlot(canvas, data, maxFreq, nPts, unit, color, f) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const pad = { left: 46, right: 10, top: 4, bottom: 16 };
+  const pad = { left: 46, right: 25, top: 4, bottom: 30 };
   const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
   ctx.clearRect(0, 0, w, h);
 
@@ -663,8 +730,20 @@ function drawModalSinglePlot(canvas, data, maxFreq, nPts, unit, color, f) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   for (let i = 0; i <= 4; i++) {
     const x = pad.left + (i / 4) * pw;
-    ctx.fillText((maxFreq * i / 4).toFixed(0), x, pad.top + ph + 1);
+    ctx.fillText((maxFreq * i / 4).toFixed(0), x, pad.top + ph + 2);
   }
+
+  // Axis Titles
+  const unitMap = { 'dB': 'Mag (dB)', '°': 'Phase (°)', 'ms': 'Delay (ms)' };
+  ctx.font = '600 9px "Inter",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Frequency (Hz)', pad.left + pw / 2, h - 8);
+  
+  ctx.save();
+  ctx.translate(10, pad.top + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(unitMap[unit] || unit, 0, 0);
+  ctx.restore();
 
   // Trace
   ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.6;
@@ -739,17 +818,16 @@ let redesignTimeout = null;
 function initUI() {
   const sigFreqEl = document.getElementById('sig-freq');
   const sigFreqVal = document.getElementById('sig-freq-val');
-  sigFreqEl.addEventListener('input', () => {
-    const v = parseFloat(sigFreqEl.value);
+  
+  const updateSigFreq = (val) => {
+    const v = parseFloat(val);
+    if (isNaN(v)) return;
     setNested('sigFreq', v);
-    if (sigFreqVal) sigFreqVal.textContent = v;
+    sigFreqEl.value = v;
+    sigFreqVal.value = v;
     
-    // Auto-adjust zoom to show ~5 cycles for better readability
-    let newScale = getTWindow() / (5 / v);
-    state.zoom.time.scale = Math.max(1, newScale);
-    state.zoom.time.offset = 0;
+    autoZoomTime();
     
-    // Debounce the heavy filter recalculation so it does not lag the slider drag
     clearTimeout(redesignTimeout);
     redesignTimeout = setTimeout(() => {
       redesignFilter('aaf');
@@ -757,32 +835,48 @@ function initUI() {
       scheduleRender();
     }, 150);
     
-    // We can immediately render without the active filter recalculations giving a somewhat accurate visual
     updateSignalSummary();
     scheduleRender();
-  });
+  };
+
+  sigFreqEl.addEventListener('input', () => updateSigFreq(sigFreqEl.value));
+  sigFreqVal.addEventListener('input', () => updateSigFreq(sigFreqVal.value));
 
   // Signal edit button
   document.getElementById('sig-plot-btn').addEventListener('click', openSignalModal);
   document.getElementById('sig-modal-close').addEventListener('click', closeSignalModal);
   
   // Signal modal live preview updates
-  ['msig-waveform', 'msig-amp', 'msig-dc', 'msig-phase', 'msig-duty'].forEach(id => {
+  ['msig-waveform', 'msig-amp', 'msig-dc', 'msig-phase', 'msig-duty', 'msig-am-enabled', 'msig-am-freq'].forEach(id => {
     const el = document.getElementById(id);
-    el.addEventListener('input', () => {
+    if (!el) return;
+    el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', () => {
       if(id === 'msig-waveform') {
         document.getElementById('msig-duty-row').style.display = el.value === 'square' ? '' : 'none';
+      }
+      if(id === 'msig-am-enabled') {
+        document.getElementById('msig-am-freq-row').style.display = el.checked ? '' : 'none';
       }
       updateStateFromSignalModal();
     });
   });
 
-  const sampEl = document.getElementById('sampling-freq'), sampRO = document.getElementById('sampling-freq-val');
-  sampEl.addEventListener('input', () => {
-    state.samplingFreq = parseFloat(sampEl.value); sampRO.textContent = state.samplingFreq;
+  const sampEl = document.getElementById('sampling-freq'), sampVal = document.getElementById('sampling-freq-val');
+  
+  const updateSamplingFreq = (val) => {
+    const v = parseFloat(val);
+    if (isNaN(v)) return;
+    state.samplingFreq = v;
+    sampEl.value = v;
+    sampVal.value = v;
+    
+    autoZoomTime(); // Rate might change
     if (state.faFromSampling) applyFaFromSampling();
     scheduleRender();
-  });
+  };
+
+  sampEl.addEventListener('input', () => updateSamplingFreq(sampEl.value));
+  sampVal.addEventListener('input', () => updateSamplingFreq(sampVal.value));
 
 
 
@@ -815,6 +909,9 @@ function initUI() {
   document.getElementById('modal-close').addEventListener('click', closeFilterModal);
   document.getElementById('filter-modal').addEventListener('click', e => {
     if (e.target === e.currentTarget) closeFilterModal();
+  });
+  document.getElementById('sig-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeSignalModal();
   });
 
   // Global toggle buttons
