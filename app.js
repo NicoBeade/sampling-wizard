@@ -20,7 +20,7 @@ function getN() {
 
 const state = {
   waveform: 'sine', sigFreq: 1000, sigAmp: 1, sigDC: 0, sigPhase: 0, sigDuty: 50,
-  sigSymbolRate: 1000, sigRolloff: 0.5, sigNumSymbols: 10,
+  sigSymbolRate: 1000, sigRolloff: 0.5, sigNumSymbols: 10, sigNumPeriods: 2,
   amEnabled: false, amFreq: 1000,
   samplingFreq: 8000,
   stages: {
@@ -32,6 +32,7 @@ const state = {
   sameFilter: false,
   faFromSampling: false,
   zoom: { time: { scale: 1, offset: 0 }, freq: { scale: 1, offset: 0 } },
+  spectrumViewType: 'line'
 };
 
 function getInternalRate() { 
@@ -45,7 +46,7 @@ function getInternalRate() {
   const maxContFreq = Math.max(signalBW, state.amEnabled ? state.amFreq + signalBW : 0);
   const minContFreq = state.amEnabled ? Math.min(signalBW, state.amFreq) : signalBW;
   
-  const targetPeriods = state.waveform === 'bitstream' ? Math.max(5, state.sigNumSymbols) : 5;
+  const targetPeriods = state.waveform === 'bitstream' ? Math.max(5, state.sigNumSymbols) : state.sigNumPeriods;
   const baseRate = getN() * (minContFreq > 0.1 ? minContFreq : 1) / targetPeriods;
   // Increase rate to support the 8x spectrum view without aliasing in the sim
   return Math.max(baseRate, state.samplingFreq * 24, maxContFreq * 10); 
@@ -392,16 +393,44 @@ function plotSpectrum(canvas, magDb, nyquist, displayLimit) {
   ctx.restore();
 
   const nBins = magDb.length;
-  ctx.beginPath(); ctx.strokeStyle = cachedColors.spectrum; ctx.lineWidth = 1.4;
-  for (let px = 0; px < pw; px++) {
-    const fraction = z.offset + (px / pw) / z.scale;
-    const freq = fraction * displayLimit;
-    const bin = Math.min(nBins - 1, Math.floor((freq / nyquist) * nBins));
-    const db = Math.max(magDb[bin], dbMin);
-    const x = pad.left + px, y = pad.top + (1 - (db - dbMin) / dbRange) * ph;
-    px === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  ctx.strokeStyle = cachedColors.spectrum; ctx.lineWidth = 1.4;
+
+  if (state.spectrumViewType === 'stems') {
+    // Determine a reasonable step to not crowd stems. 
+    // We want at most ~200 stems on screen.
+    const skip = Math.max(1, Math.floor(pw / 100)); // Fixed: This was calculating skips based on n, should be based on px
+    // Actually, let's step by pixels.
+    const stepPx = Math.max(4, Math.floor(pw / 120)); 
+    for (let px = 0; px < pw; px += stepPx) {
+      const fraction = z.offset + (px / pw) / z.scale;
+      const freq = fraction * displayLimit;
+      const bin = Math.min(nBins - 1, Math.floor((freq / nyquist) * nBins));
+      const db = Math.max(magDb[bin], dbMin);
+      const x = pad.left + px, y = pad.top + (1 - (db - dbMin) / dbRange) * ph;
+      const y0 = pad.top + ph;
+      
+      ctx.beginPath();
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.arc(x, y, 2, 0, 2 * Math.PI);
+      ctx.fillStyle = cachedColors.spectrum;
+      ctx.fill();
+    }
+  } else {
+    ctx.beginPath();
+    for (let px = 0; px < pw; px++) {
+      const fraction = z.offset + (px / pw) / z.scale;
+      const freq = fraction * displayLimit;
+      const bin = Math.min(nBins - 1, Math.floor((freq / nyquist) * nBins));
+      const db = Math.max(magDb[bin], dbMin);
+      const x = pad.left + px, y = pad.top + (1 - (db - dbMin) / dbRange) * ph;
+      px === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
 }
 
 /* ─── §8 Render ─── */
@@ -622,10 +651,12 @@ function openSignalModal() {
   document.getElementById('msig-symbol-rate-row').style.display = isBitstream ? '' : 'none';
   document.getElementById('msig-rolloff-row').style.display = isBitstream ? '' : 'none';
   document.getElementById('msig-symbol-count-row').style.display = isBitstream ? '' : 'none';
+  document.getElementById('msig-periods-row').style.display = isBitstream ? 'none' : '';
 
   document.getElementById('msig-symbol-rate').value = state.sigSymbolRate;
   document.getElementById('msig-rolloff').value = state.sigRolloff;
   document.getElementById('msig-symbol-count').value = state.sigNumSymbols;
+  document.getElementById('msig-periods').value = state.sigNumPeriods;
   
   document.getElementById('sig-modal').style.display = '';
   document.body.classList.add('modal-open');
@@ -652,8 +683,9 @@ function renderSignalPreview() {
 
   const amEnabled = document.getElementById('msig-am-enabled').checked;
   const amFreq = parseFloat(document.getElementById('msig-am-freq').value) || 0;
+  const numPeriods = parseInt(document.getElementById('msig-periods').value) || 2;
 
-  // Plot exactly two full periods of the lowest frequency
+  // Plot requested periods of the lowest frequency
   let lowestFreq = amEnabled ? Math.min(freq, amFreq) : freq;
   if (type === 'bitstream') {
     const symbolRate = parseFloat(document.getElementById('msig-symbol-rate').value) || 1000;
@@ -661,7 +693,7 @@ function renderSignalPreview() {
     lowestFreq = amEnabled ? Math.min(sigBW, amFreq) : sigBW;
   }
   const T = 1 / (lowestFreq || 1); 
-  const totalTime = 2 * T;
+  const totalTime = (type === 'bitstream' ? 2 : numPeriods) * T;
   const previewRate = 1000 / totalTime; // 1000 points total
   const n = 1000;
   
@@ -697,7 +729,8 @@ function renderSignalPreview() {
 
   // Axis Titles
   ctx.font = '600 9px "Inter",sans-serif';
-  ctx.fillText('Time (2 periods)', pad.left + pw / 2, h - 8);
+  const xTitle = type === 'bitstream' ? `${state.sigNumSymbols} symbols` : `${numPeriods} periods`;
+  ctx.fillText('Time (' + xTitle + ')', pad.left + pw / 2, h - 8);
   
   ctx.save();
   ctx.translate(10, pad.top + ph / 2);
@@ -725,7 +758,8 @@ function updateStateFromSignalModal() {
   
   state.amEnabled = document.getElementById('msig-am-enabled').checked;
   state.amFreq = parseFloat(document.getElementById('msig-am-freq').value) || 1000;
-  state.sigNumSymbols = parseInt(document.getElementById('msig-symbol-count').value) || 10;
+  state.sigNumSymbols = Math.max(1, parseInt(document.getElementById('msig-symbol-count').value) || 10);
+  state.sigNumPeriods = Math.max(1, parseInt(document.getElementById('msig-periods').value) || 2);
 
   const isBitstream = state.waveform === 'bitstream';
   const isSquare = state.waveform === 'square';
@@ -739,7 +773,10 @@ function updateStateFromSignalModal() {
   document.getElementById('msig-symbol-rate-row').style.display = isBitstream ? '' : 'none';
   document.getElementById('msig-rolloff-row').style.display = isBitstream ? '' : 'none';
   document.getElementById('msig-symbol-count-row').style.display = isBitstream ? '' : 'none';
+  document.getElementById('msig-periods-row').style.display = isBitstream ? 'none' : '';
 
+  redesignFilter('aaf');
+  redesignFilter('recon');
   autoZoomTime();
   updateSignalSummary();
   renderSignalPreview();
@@ -750,7 +787,7 @@ function autoZoomTime() {
   // Auto-adjust zoom to show the targeted duration.
   // Scale = Window / Target
   const lowestFreq = state.amEnabled ? Math.min(state.sigFreq, state.amFreq) : state.sigFreq;
-  let targetDur = lowestFreq > 0.1 ? 5 / lowestFreq : 5;
+  let targetDur = lowestFreq > 0.1 ? state.sigNumPeriods / lowestFreq : state.sigNumPeriods;
 
   if (state.waveform === 'bitstream') {
     targetDur = state.sigNumSymbols / state.sigSymbolRate;
@@ -968,7 +1005,7 @@ function initUI() {
   document.getElementById('sig-modal-close').addEventListener('click', closeSignalModal);
   
   // Signal modal live preview updates
-  ['msig-waveform', 'msig-amp', 'msig-dc', 'msig-phase', 'msig-duty', 'msig-am-enabled', 'msig-am-freq', 'msig-symbol-rate', 'msig-rolloff', 'msig-symbol-count'].forEach(id => {
+  ['msig-waveform', 'msig-amp', 'msig-dc', 'msig-phase', 'msig-duty', 'msig-am-enabled', 'msig-am-freq', 'msig-symbol-rate', 'msig-rolloff', 'msig-symbol-count', 'msig-periods'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', () => {
@@ -983,6 +1020,7 @@ function initUI() {
         document.getElementById('msig-symbol-rate-row').style.display = isBitstream ? '' : 'none';
         document.getElementById('msig-rolloff-row').style.display = isBitstream ? '' : 'none';
         document.getElementById('msig-symbol-count-row').style.display = isBitstream ? '' : 'none';
+        document.getElementById('msig-periods-row').style.display = isBitstream ? 'none' : '';
       }
       if(id === 'msig-am-enabled') {
         document.getElementById('msig-am-freq-row').style.display = el.checked ? '' : 'none';
@@ -991,11 +1029,24 @@ function initUI() {
     });
   });
 
+  // Spectrum toggle stems
+  const toggleBtn = document.getElementById('toggle-fft-view');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      state.spectrumViewType = (state.spectrumViewType === 'stems' ? 'line' : 'stems');
+      toggleBtn.textContent = (state.spectrumViewType === 'stems' ? 'Lines' : 'Stems');
+      scheduleRender();
+    });
+  }
+
   const sampEl = document.getElementById('sampling-freq'), sampVal = document.getElementById('sampling-freq-val');
   
   const updateSamplingFreq = (val) => {
-    const v = parseFloat(val);
+    let v = parseFloat(val);
     if (isNaN(v)) return;
+    if (v < 100) v = 100; // Safety guard
     state.samplingFreq = v;
     sampEl.value = v;
     sampVal.value = v;

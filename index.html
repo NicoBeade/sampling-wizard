@@ -61,8 +61,8 @@
         </div>
         <div class="control-row">
           <label for="sampling-freq">Sampling Freq (Hz)</label>
-          <input type="range" id="sampling-freq" min="100" max="150000" value="8000" step="1">
-          <input type="number" id="sampling-freq-val" min="100" max="150000" value="8000" step="1" class="input-text">
+          <input type="range" id="sampling-freq" min="100" max="250000" value="8000" step="100">
+          <input type="number" id="sampling-freq-val" min="100" max="250000" value="8000" step="100" class="input-text">
         </div>
       </section>
 
@@ -177,10 +177,13 @@
         <h3>Sampled / Processed Signal</h3>
         <canvas id="plot-sampled"></canvas>
       </div>
-      <div class="plot-container glass-panel" id="plot-spectrum-container">
-        <h3>Output Signal Frequency Spectrum</h3>
-        <canvas id="plot-spectrum"></canvas>
-      </div>
+        <div class="plot-container glass-panel" id="plot-spectrum-container">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem;">
+            <h3 style="margin: 0;">Output Signal Frequency Spectrum</h3>
+            <button id="toggle-fft-view" class="btn-small" style="padding: 2px 8px; font-size: 10px;">Stems</button>
+          </div>
+          <canvas id="plot-spectrum"></canvas>
+        </div>
     </div>
   </main>
 
@@ -230,6 +233,10 @@
           <div class="control-row" id="msig-symbol-count-row">
             <label for="msig-symbol-count">Symbols to Show</label>
             <input type="number" id="msig-symbol-count" step="1" min="1" max="500" value="10" class="input-text">
+          </div>
+          <div class="control-row" id="msig-periods-row">
+            <label for="msig-periods">Periods to Show</label>
+            <input type="number" id="msig-periods" step="1" min="1" max="50" value="2" class="input-text">
           </div>
           <div class="control-row" style="margin-top: 0.4rem; border-top: 1px dotted var(--glass-border); padding-top: 0.4rem;">
             <label for="msig-am-enabled">AM Modulation</label>

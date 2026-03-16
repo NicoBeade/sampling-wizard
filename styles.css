@@ -146,8 +146,25 @@ body {
   color: var(--text-secondary);
 }
 
-.theme-label {
-  font-size: 0.6rem;
+.btn-small {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  transition: all 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+.btn-small:hover {
+  background: var(--glass-bg);
+  color: var(--accent-1);
+  border-color: var(--accent-1);
+}
+.btn-small:active {
+  transform: translateY(1px);
 }
 
 /* ═══ Main Layout ═══ */
@@ -274,6 +291,28 @@ body {
 .info-tooltip.active {
   opacity: 1;
   color: var(--accent-1);
+}
+
+.help-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  background: var(--glass-border);
+  color: var(--text-muted);
+  font-size: 10px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  cursor: help;
+  vertical-align: middle;
+  border: 1px solid var(--glass-border);
+  transition: all 0.2s;
+}
+.help-icon:hover {
+  background: var(--glass-bg);
+  color: var(--accent-1);
+  border-color: var(--accent-1);
 }
 
 .tooltip-content {
