@@ -200,23 +200,36 @@
               <option value="square">Square</option>
               <option value="triangle">Triangle</option>
               <option value="sawtooth">Sawtooth</option>
+              <option value="bitstream">Bitstream (RRC)</option>
             </select>
           </div>
           <div class="control-row">
             <label for="msig-amp">Amplitude (V)</label>
             <input type="number" id="msig-amp" step="0.1" min="0.1" max="5" value="1.0" class="input-text">
           </div>
-          <div class="control-row">
+          <div class="control-row" id="msig-dc-row">
             <label for="msig-dc">DC Offset (V)</label>
             <input type="number" id="msig-dc" step="0.1" min="-5" max="5" value="0.0" class="input-text">
           </div>
-          <div class="control-row">
+          <div class="control-row" id="msig-phase-row">
             <label for="msig-phase">Phase (°)</label>
             <input type="number" id="msig-phase" step="1" min="0" max="360" value="0" class="input-text">
           </div>
           <div class="control-row" id="msig-duty-row">
             <label for="msig-duty">Duty Cycle (%)</label>
             <input type="number" id="msig-duty" step="1" min="5" max="95" value="50" class="input-text">
+          </div>
+          <div class="control-row" id="msig-symbol-rate-row">
+            <label for="msig-symbol-rate">Symbol Rate (Baud)</label>
+            <input type="number" id="msig-symbol-rate" step="1" min="100" max="22000" value="1000" class="input-text">
+          </div>
+          <div class="control-row" id="msig-rolloff-row">
+            <label for="msig-rolloff">Rolloff (&beta;)</label>
+            <input type="number" id="msig-rolloff" step="0.05" min="0" max="1" value="0.5" class="input-text">
+          </div>
+          <div class="control-row" id="msig-symbol-count-row">
+            <label for="msig-symbol-count">Symbols to Show</label>
+            <input type="number" id="msig-symbol-count" step="1" min="1" max="100" value="10" class="input-text">
           </div>
           <div class="control-row" style="margin-top: 0.4rem; border-top: 1px dotted var(--glass-border); padding-top: 0.4rem;">
             <label for="msig-am-enabled">AM Modulation</label>

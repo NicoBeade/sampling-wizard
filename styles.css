@@ -247,7 +247,7 @@ body {
 }
 
 #sig-modal .modal-content {
-  height: 230px; /* Even shorter for perfect aspect ratio */
+  height: 340px; 
   display: flex;
   flex-direction: column;
 }
@@ -681,12 +681,12 @@ body.modal-open #app-main {
 .modal-controls {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  overflow-y: auto;
+  gap: 0.1rem;
+  overflow-y: hidden;
 }
 
 .modal-controls .control-row {
-  margin-bottom: 0.15rem;
+  margin-bottom: 0.05rem;
 }
 
 .modal-controls label {
